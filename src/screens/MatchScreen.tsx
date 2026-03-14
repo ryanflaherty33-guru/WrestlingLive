@@ -1,0 +1,253 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { COLORS, FONTS, SPACING } from '../utils/theme';
+import { Button } from '../components/Button';
+import { MatchState, Opponent, PlayerData, MoveType, Move } from '../data/types';
+import { createMatchState, getAvailableMoves, processFullTurn, getMatchResult } from '../engine/matchEngine';
+
+interface MatchScreenProps {
+  player: PlayerData;
+  opponent: Opponent;
+  onMatchEnd: (result: 'win' | 'loss', finalState: MatchState) => void;
+}
+
+export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) {
+  const [matchState, setMatchState] = useState<MatchState>(createMatchState());
+  const [actionLog, setActionLog] = useState<string[]>(['Match begins! Shake hands and wrestle!']);
+  const [showResult, setShowResult] = useState(false);
+
+  const availableMoves = getAvailableMoves(matchState.position);
+
+  function handleMove(moveType: MoveType) {
+    if (!matchState.isActive) return;
+
+    const newState = processFullTurn(moveType, matchState, player.stats, opponent);
+    setMatchState(newState);
+    setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
+
+    if (!newState.isActive) {
+      setTimeout(() => setShowResult(true), 500);
+    }
+  }
+
+  function formatTime(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function getPositionText(pos: string): string {
+    switch (pos) {
+      case 'neutral': return 'Neutral (On Feet)';
+      case 'playerTop': return 'You on Top';
+      case 'playerBottom': return 'You on Bottom';
+      default: return pos;
+    }
+  }
+
+  function getPositionColor(pos: string): string {
+    switch (pos) {
+      case 'playerTop': return COLORS.success;
+      case 'playerBottom': return COLORS.danger;
+      default: return COLORS.info;
+    }
+  }
+
+  if (showResult) {
+    const rawResult = getMatchResult(matchState);
+    const result: 'win' | 'loss' = rawResult === 'win' ? 'win' : 'loss';
+    const isWin = result === 'win';
+    return (
+      <View style={[styles.container, { backgroundColor: isWin ? '#1a3a1a' : '#3a1a1a' }]}>
+        <View style={styles.resultScreen}>
+          <Text style={styles.resultEmoji}>{isWin ? '🏆' : '😤'}</Text>
+          <Text style={[styles.resultTitle, { color: isWin ? COLORS.success : COLORS.danger }]}>
+            {isWin ? 'VICTORY!' : 'DEFEAT'}
+          </Text>
+          <Text style={styles.resultScore}>
+            {matchState.playerScore} - {matchState.opponentScore}
+          </Text>
+          <Text style={styles.resultVs}>vs {opponent.name}</Text>
+          {matchState.pinCount >= 3 && <Text style={styles.pinText}>WIN BY PIN!</Text>}
+          {Math.abs(matchState.playerScore - matchState.opponentScore) >= 15 && (
+            <Text style={styles.pinText}>TECH FALL!</Text>
+          )}
+          <Button
+            title="Continue"
+            onPress={() => onMatchEnd(result, matchState)}
+            variant={isWin ? 'accent' : 'primary'}
+            size="large"
+            style={{ marginTop: 30 }}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* Scoreboard */}
+      <View style={styles.scoreboard}>
+        <View style={styles.scoreSection}>
+          <Text style={styles.scoreName}>{player.name}</Text>
+          <Text style={styles.scoreValue}>{matchState.playerScore}</Text>
+        </View>
+        <View style={styles.scoreCenter}>
+          <Text style={styles.periodText}>Period {matchState.period}</Text>
+          <Text style={styles.timerText}>{formatTime(matchState.timeRemaining)}</Text>
+        </View>
+        <View style={styles.scoreSection}>
+          <Text style={styles.scoreName}>{opponent.name}</Text>
+          <Text style={styles.scoreValue}>{matchState.opponentScore}</Text>
+        </View>
+      </View>
+
+      {/* Mat / Position Display */}
+      <View style={styles.matArea}>
+        <View style={[styles.positionBadge, { backgroundColor: getPositionColor(matchState.position) }]}>
+          <Text style={styles.positionText}>{getPositionText(matchState.position)}</Text>
+        </View>
+
+        <View style={styles.staminaRow}>
+          <View style={styles.staminaContainer}>
+            <Text style={styles.staminaLabel}>Your Stamina</Text>
+            <View style={styles.staminaBg}>
+              <View style={[styles.staminaFill, { width: `${matchState.playerStamina}%`, backgroundColor: COLORS.success }]} />
+            </View>
+          </View>
+          <View style={styles.staminaContainer}>
+            <Text style={styles.staminaLabel}>Opp Stamina</Text>
+            <View style={styles.staminaBg}>
+              <View style={[styles.staminaFill, { width: `${matchState.opponentStamina}%`, backgroundColor: COLORS.danger }]} />
+            </View>
+          </View>
+        </View>
+
+        {matchState.nearFall && (
+          <View style={styles.nearFallBanner}>
+            <Text style={styles.nearFallText}>NEAR FALL! ({matchState.pinCount}/3)</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Action Log */}
+      <ScrollView style={styles.actionLog}>
+        {actionLog.map((msg, i) => (
+          <Text key={i} style={[styles.logText, i === 0 && styles.logTextLatest]}>
+            {msg}
+          </Text>
+        ))}
+      </ScrollView>
+
+      {/* Move Buttons */}
+      <View style={styles.moveArea}>
+        <Text style={styles.moveLabel}>Your Moves:</Text>
+        <View style={styles.moveGrid}>
+          {availableMoves.map(move => (
+            <TouchableOpacity
+              key={move.type}
+              style={styles.moveButton}
+              onPress={() => handleMove(move.type)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.moveIcon}>{move.icon}</Text>
+              <Text style={styles.moveName}>{move.name}</Text>
+              <Text style={styles.movePoints}>+{move.pointsOnSuccess}pts</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.primaryDark },
+  scoreboard: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.primary,
+    paddingTop: 52,
+    paddingBottom: 12,
+    paddingHorizontal: SPACING.md,
+    alignItems: 'center',
+  },
+  scoreSection: { flex: 1, alignItems: 'center' },
+  scoreName: { color: COLORS.textWhite, fontSize: 12, fontWeight: '500' },
+  scoreValue: { color: COLORS.textWhite, fontSize: 36, fontWeight: 'bold' },
+  scoreCenter: { alignItems: 'center', paddingHorizontal: SPACING.md },
+  periodText: { color: COLORS.matGray, fontSize: 12 },
+  timerText: { color: COLORS.accent, fontSize: 24, fontWeight: 'bold' },
+  matArea: {
+    backgroundColor: COLORS.matBlue,
+    margin: SPACING.sm,
+    borderRadius: 12,
+    padding: SPACING.md,
+    alignItems: 'center',
+  },
+  positionBadge: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: SPACING.sm,
+  },
+  positionText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
+  staminaRow: { flexDirection: 'row', width: '100%', gap: 12 },
+  staminaContainer: { flex: 1 },
+  staminaLabel: { color: COLORS.textWhite, fontSize: 11, marginBottom: 2 },
+  staminaBg: { height: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4, overflow: 'hidden' },
+  staminaFill: { height: '100%', borderRadius: 4 },
+  nearFallBanner: {
+    backgroundColor: COLORS.danger,
+    paddingHorizontal: 20,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: SPACING.sm,
+  },
+  nearFallText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
+  actionLog: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    margin: SPACING.sm,
+    borderRadius: 10,
+    padding: SPACING.sm,
+  },
+  logText: { fontSize: 13, color: COLORS.textLight, marginBottom: 4, lineHeight: 18 },
+  logTextLatest: { color: COLORS.text, fontWeight: '600', fontSize: 14 },
+  moveArea: {
+    backgroundColor: COLORS.card,
+    paddingHorizontal: SPACING.sm,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.lg,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  moveLabel: { ...FONTS.small, marginBottom: 6, marginLeft: 4 },
+  moveGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  moveButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    minWidth: '22%',
+    flexGrow: 1,
+  },
+  moveIcon: { fontSize: 18 },
+  moveName: { color: COLORS.textWhite, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  movePoints: { color: COLORS.accentLight, fontSize: 10, marginTop: 1 },
+  resultScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+  },
+  resultEmoji: { fontSize: 80 },
+  resultTitle: { fontSize: 40, fontWeight: 'bold', marginTop: 16 },
+  resultScore: { fontSize: 48, fontWeight: 'bold', color: COLORS.textWhite, marginTop: 8 },
+  resultVs: { fontSize: 18, color: COLORS.matGray, marginTop: 8 },
+  pinText: { fontSize: 22, fontWeight: 'bold', color: COLORS.accent, marginTop: 8 },
+});
