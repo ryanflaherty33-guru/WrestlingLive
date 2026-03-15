@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../utils/theme';
 import { Button } from '../components/Button';
+import { PixelScene } from '../components/PixelWrestler';
 import { MatchState, Opponent, PlayerData, MoveType, Move } from '../data/types';
 import {
   createMatchState,
@@ -23,68 +24,6 @@ interface MatchScreenProps {
 }
 
 type MatchPhase = 'attacking' | 'defending';
-
-function WrestlerVisual({ position, playerName, opponentName }: { position: string; playerName: string; opponentName: string }) {
-  const getVisual = () => {
-    switch (position) {
-      case 'neutral':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.wrestlerRow}>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-              <Text style={visualStyles.vsText}>vs</Text>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Tied up on feet</Text>
-          </View>
-        );
-      case 'playerTop':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.groundStack}>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-              <Text style={visualStyles.onTopText}>on top of</Text>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler, visualStyles.bottomWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Riding — work for a turn!</Text>
-          </View>
-        );
-      case 'playerBottom':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.groundStack}>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-              <Text style={visualStyles.onTopText}>on top of</Text>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler, visualStyles.bottomWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Escape or reverse!</Text>
-          </View>
-        );
-      default:
-        return null;
-    }
-  };
-
-  return <View style={visualStyles.container}>{getVisual()}</View>;
-}
 
 export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) {
   const [matchState, setMatchState] = useState<MatchState>(createMatchState());
@@ -342,11 +281,23 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
           <Text style={styles.positionText}>{getPositionText(matchState.position)}</Text>
         </View>
 
-        <WrestlerVisual
+        <PixelScene
           position={matchState.position}
-          playerName={player.name.split(' ')[0]}
-          opponentName={opponent.name.split(' ')[0]}
+          attackMove={currentAttack?.name}
+          isDefending={phase === 'defending'}
         />
+
+        <View style={styles.wrestlerLabels}>
+          <View style={styles.wrestlerLabelBadge}>
+            <View style={[styles.colorDot, { backgroundColor: '#2E7D32' }]} />
+            <Text style={styles.wrestlerLabelText}>{player.name.split(' ')[0]}</Text>
+          </View>
+          <Text style={styles.vsText}>vs</Text>
+          <View style={styles.wrestlerLabelBadge}>
+            <View style={[styles.colorDot, { backgroundColor: '#C62828' }]} />
+            <Text style={styles.wrestlerLabelText}>{opponent.name.split(' ')[0]}</Text>
+          </View>
+        </View>
 
         <View style={styles.staminaRow}>
           <View style={styles.staminaContainer}>
@@ -443,69 +394,6 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   );
 }
 
-const visualStyles = StyleSheet.create({
-  container: {
-    marginVertical: 8,
-    width: '100%',
-  },
-  scene: {
-    alignItems: 'center',
-  },
-  wrestlerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  groundStack: {
-    alignItems: 'center',
-  },
-  wrestler: {
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  playerWrestler: {
-    backgroundColor: 'rgba(46, 125, 50, 0.3)',
-    borderWidth: 1,
-    borderColor: COLORS.success,
-  },
-  opponentWrestler: {
-    backgroundColor: 'rgba(198, 40, 40, 0.3)',
-    borderWidth: 1,
-    borderColor: COLORS.danger,
-  },
-  bottomWrestler: {
-    marginTop: -4,
-  },
-  wrestlerEmoji: {
-    fontSize: 28,
-  },
-  wrestlerLabel: {
-    color: COLORS.textWhite,
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  vsText: {
-    color: COLORS.matGray,
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  onTopText: {
-    color: COLORS.matGray,
-    fontSize: 10,
-    marginVertical: 2,
-  },
-  posDesc: {
-    color: COLORS.matGray,
-    fontSize: 11,
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-});
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.primaryDark },
   scoreboard: {
@@ -540,6 +428,32 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   positionText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
+  wrestlerLabels: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 6,
+  },
+  wrestlerLabelBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  colorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  wrestlerLabelText: {
+    color: COLORS.textWhite,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  vsText: {
+    color: COLORS.matGray,
+    fontSize: 10,
+  },
   staminaRow: { flexDirection: 'row', width: '100%', gap: 12 },
   staminaContainer: { flex: 1 },
   staminaLabel: { color: COLORS.textWhite, fontSize: 11, marginBottom: 2 },
