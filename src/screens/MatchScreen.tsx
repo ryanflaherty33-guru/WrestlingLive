@@ -1,15 +1,28 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../utils/theme';
 import { Button } from '../components/Button';
 import { MatchState, Opponent, PlayerData, MoveType, Move } from '../data/types';
-import { createMatchState, getAvailableMoves, processFullTurn, getMatchResult } from '../engine/matchEngine';
+import {
+  createMatchState,
+  getAvailableMoves,
+  getMatchResult,
+  generateOpponentAttack,
+  resolveOpponentAttack,
+  applyPlayerAttack,
+  applyDefenseResult,
+  getOpponentAttackInterval,
+  OpponentAttack,
+  DefenseOption,
+} from '../engine/matchEngine';
 
 interface MatchScreenProps {
   player: PlayerData;
   opponent: Opponent;
   onMatchEnd: (result: 'win' | 'loss', finalState: MatchState) => void;
 }
+
+type MatchPhase = 'attacking' | 'defending';
 
 function WrestlerVisual({ position, playerName, opponentName }: { position: string; playerName: string; opponentName: string }) {
   const getVisual = () => {
@@ -79,28 +92,157 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   const [showResult, setShowResult] = useState(false);
   const [cooldown, setCooldown] = useState(false);
 
+  // Real-time phase system
+  const [phase, setPhase] = useState<MatchPhase>('attacking');
+  const [currentAttack, setCurrentAttack] = useState<OpponentAttack | null>(null);
+  const [reactionTimeLeft, setReactionTimeLeft] = useState(0);
+  const [reactionTotal, setReactionTotal] = useState(0);
+
+  // Refs to access latest state in timers
+  const matchStateRef = useRef(matchState);
+  const phaseRef = useRef(phase);
+  const attackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const showResultRef = useRef(showResult);
+
+  matchStateRef.current = matchState;
+  phaseRef.current = phase;
+  showResultRef.current = showResult;
+
   const availableMoves = getAvailableMoves(matchState.position);
 
-  function handleMove(moveType: MoveType) {
-    if (!matchState.isActive || cooldown) return;
+  // ─── Schedule next opponent attack ───
+  const scheduleOpponentAttack = useCallback(() => {
+    if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
+
+    const interval = getOpponentAttackInterval(opponent);
+    // Add some randomness
+    const delay = interval + Math.floor(Math.random() * 1500) - 500;
+
+    attackTimerRef.current = setTimeout(() => {
+      const state = matchStateRef.current;
+      if (!state.isActive || showResultRef.current) return;
+      if (phaseRef.current !== 'attacking') {
+        // If already defending, reschedule
+        scheduleOpponentAttack();
+        return;
+      }
+
+      const attack = generateOpponentAttack(state, opponent);
+      if (!attack) {
+        scheduleOpponentAttack();
+        return;
+      }
+
+      setCurrentAttack(attack);
+      setPhase('defending');
+      setReactionTimeLeft(attack.reactionWindowMs);
+      setReactionTotal(attack.reactionWindowMs);
+      setActionLog(prev => [attack.description, ...prev.slice(0, 20)]);
+    }, delay);
+  }, [opponent]);
+
+  // ─── Start opponent attack timer on mount ───
+  useEffect(() => {
+    scheduleOpponentAttack();
+    return () => {
+      if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
+      if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+    };
+  }, [scheduleOpponentAttack]);
+
+  // ─── Reaction countdown ───
+  useEffect(() => {
+    if (phase === 'defending' && currentAttack && matchState.isActive) {
+      if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+
+      const tickMs = 50;
+      reactionTimerRef.current = setInterval(() => {
+        setReactionTimeLeft(prev => {
+          const next = prev - tickMs;
+          if (next <= 0) {
+            // Time's up! Opponent attack auto-succeeds
+            if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+            handleDefenseTimeout();
+            return 0;
+          }
+          return next;
+        });
+      }, tickMs);
+
+      return () => {
+        if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+      };
+    }
+  }, [phase, currentAttack]);
+
+  function handleDefenseTimeout() {
+    const state = matchStateRef.current;
+    if (!state.isActive) return;
+
+    const attack = currentAttack;
+    if (!attack) return;
+
+    const result = resolveOpponentAttack(attack, null, state, player.stats, opponent);
+    const newState = applyDefenseResult(result, state);
+
+    setMatchState(newState);
+    setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
+    setPhase('attacking');
+    setCurrentAttack(null);
+
+    if (!newState.isActive) {
+      setTimeout(() => setShowResult(true), 500);
+    } else {
+      scheduleOpponentAttack();
+    }
+  }
+
+  function handleDefenseChoice(defense: DefenseOption) {
+    if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+
+    const state = matchStateRef.current;
+    if (!state.isActive || !currentAttack) return;
+
+    const result = resolveOpponentAttack(currentAttack, defense, state, player.stats, opponent);
+    const newState = applyDefenseResult(result, state);
+
+    setMatchState(newState);
+    setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
+    setPhase('attacking');
+    setCurrentAttack(null);
+
+    if (!newState.isActive) {
+      setTimeout(() => setShowResult(true), 500);
+    } else {
+      scheduleOpponentAttack();
+    }
+  }
+
+  function handlePlayerAttack(moveType: MoveType) {
+    if (!matchState.isActive || cooldown || phase !== 'attacking') return;
 
     setCooldown(true);
 
-    const newState = processFullTurn(moveType, matchState, player.stats, opponent);
+    // Cancel pending opponent attack and reschedule after
+    if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
+
+    const newState = applyPlayerAttack(moveType, matchState, player.stats, opponent);
     setMatchState(newState);
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
 
     if (!newState.isActive) {
       setTimeout(() => setShowResult(true), 500);
+    } else {
+      scheduleOpponentAttack();
     }
 
-    // 800ms cooldown between moves
     setTimeout(() => setCooldown(false), 800);
   }
 
   function formatTime(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
+    const m = Math.floor(Math.max(0, seconds) / 60);
+    const s = Math.max(0, seconds) % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
@@ -153,6 +295,9 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     );
   }
 
+  const reactionPct = reactionTotal > 0 ? (reactionTimeLeft / reactionTotal) * 100 : 0;
+  const reactionBarColor = reactionPct > 50 ? COLORS.success : reactionPct > 25 ? COLORS.warning : COLORS.danger;
+
   return (
     <View style={styles.container}>
       {/* Scoreboard */}
@@ -172,12 +317,11 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
       </View>
 
       {/* Mat / Position Display */}
-      <View style={styles.matArea}>
+      <View style={[styles.matArea, phase === 'defending' && styles.matAreaDefending]}>
         <View style={[styles.positionBadge, { backgroundColor: getPositionColor(matchState.position) }]}>
           <Text style={styles.positionText}>{getPositionText(matchState.position)}</Text>
         </View>
 
-        {/* Wrestler Visuals */}
         <WrestlerVisual
           position={matchState.position}
           playerName={player.name.split(' ')[0]}
@@ -220,28 +364,61 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         ))}
       </ScrollView>
 
-      {/* Move Buttons */}
-      <View style={styles.moveArea}>
-        <View style={styles.moveLabelRow}>
-          <Text style={styles.moveLabel}>Your Moves:</Text>
-          {cooldown && <Text style={styles.cooldownText}>Wait...</Text>}
+      {/* Bottom area: Attack moves OR Defense options */}
+      {phase === 'defending' && currentAttack ? (
+        <View style={styles.defendArea}>
+          {/* Reaction timer bar */}
+          <View style={styles.reactionBarContainer}>
+            <View style={styles.reactionBarBg}>
+              <View style={[styles.reactionBarFill, { width: `${reactionPct}%`, backgroundColor: reactionBarColor }]} />
+            </View>
+            <Text style={styles.reactionTimeText}>{(reactionTimeLeft / 1000).toFixed(1)}s</Text>
+          </View>
+
+          <View style={styles.defendHeader}>
+            <Text style={styles.defendIcon}>{currentAttack.icon}</Text>
+            <Text style={styles.defendLabel}>{currentAttack.description}</Text>
+          </View>
+
+          <Text style={styles.defendPrompt}>DEFEND NOW!</Text>
+
+          <View style={styles.defenseGrid}>
+            {currentAttack.defenseOptions.map(opt => (
+              <TouchableOpacity
+                key={opt.id}
+                style={styles.defenseButton}
+                onPress={() => handleDefenseChoice(opt)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.defenseIcon}>{opt.icon}</Text>
+                <Text style={styles.defenseName}>{opt.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
-        <View style={styles.moveGrid}>
-          {availableMoves.map(move => (
-            <TouchableOpacity
-              key={move.type}
-              style={[styles.moveButton, cooldown && styles.moveButtonDisabled]}
-              onPress={() => handleMove(move.type)}
-              activeOpacity={cooldown ? 1 : 0.7}
-              disabled={cooldown}
-            >
-              <Text style={styles.moveIcon}>{move.icon}</Text>
-              <Text style={styles.moveName}>{move.name}</Text>
-              <Text style={styles.movePoints}>+{move.pointsOnSuccess}pts</Text>
-            </TouchableOpacity>
-          ))}
+      ) : (
+        <View style={styles.moveArea}>
+          <View style={styles.moveLabelRow}>
+            <Text style={styles.moveLabel}>Your Moves:</Text>
+            {cooldown && <Text style={styles.cooldownText}>Wait...</Text>}
+          </View>
+          <View style={styles.moveGrid}>
+            {availableMoves.map(move => (
+              <TouchableOpacity
+                key={move.type}
+                style={[styles.moveButton, cooldown && styles.moveButtonDisabled]}
+                onPress={() => handlePlayerAttack(move.type)}
+                activeOpacity={cooldown ? 1 : 0.7}
+                disabled={cooldown}
+              >
+                <Text style={styles.moveIcon}>{move.icon}</Text>
+                <Text style={styles.moveName}>{move.name}</Text>
+                <Text style={styles.movePoints}>+{move.pointsOnSuccess}pts</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -332,6 +509,10 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     alignItems: 'center',
   },
+  matAreaDefending: {
+    borderWidth: 2,
+    borderColor: COLORS.danger,
+  },
   positionBadge: {
     paddingHorizontal: 20,
     paddingVertical: 8,
@@ -364,6 +545,8 @@ const styles = StyleSheet.create({
   },
   logText: { fontSize: 13, color: COLORS.textLight, marginBottom: 4, lineHeight: 18 },
   logTextLatest: { color: COLORS.text, fontWeight: '600', fontSize: 14 },
+
+  // ─── Attack mode (player's turn) ───
   moveArea: {
     backgroundColor: COLORS.card,
     paddingHorizontal: SPACING.sm,
@@ -405,6 +588,93 @@ const styles = StyleSheet.create({
   moveIcon: { fontSize: 18 },
   moveName: { color: COLORS.textWhite, fontSize: 11, fontWeight: '600', marginTop: 2 },
   movePoints: { color: COLORS.accentLight, fontSize: 10, marginTop: 1 },
+
+  // ─── Defend mode ───
+  defendArea: {
+    backgroundColor: '#3a1a1a',
+    paddingHorizontal: SPACING.sm,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.lg,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: 3,
+    borderTopColor: COLORS.danger,
+  },
+  reactionBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  reactionBarBg: {
+    flex: 1,
+    height: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  reactionBarFill: {
+    height: '100%',
+    borderRadius: 5,
+  },
+  reactionTimeText: {
+    color: COLORS.textWhite,
+    fontSize: 13,
+    fontWeight: 'bold',
+    width: 36,
+    textAlign: 'right',
+  },
+  defendHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  defendIcon: {
+    fontSize: 22,
+  },
+  defendLabel: {
+    color: COLORS.textWhite,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  defendPrompt: {
+    color: COLORS.danger,
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+    letterSpacing: 2,
+  },
+  defenseGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  defenseButton: {
+    backgroundColor: COLORS.matRed,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    flex: 1,
+    maxWidth: 120,
+  },
+  defenseIcon: {
+    fontSize: 24,
+  },
+  defenseName: {
+    color: COLORS.textWhite,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // ─── Result screen ───
   resultScreen: {
     flex: 1,
     justifyContent: 'center',

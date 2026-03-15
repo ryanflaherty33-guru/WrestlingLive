@@ -49,153 +49,237 @@ function getDefenseStat(position: MatchPosition, move: Move, opponentStats: Wres
   return 50;
 }
 
-interface OpponentAction {
-  action: string;
-  scoreChange: number;
-  newPosition: MatchPosition;
-  staminaCost: number;
-  nearFall: boolean;
-  pinAdvance: boolean;
+// ─── Defense options for reacting to opponent attacks ───
+
+export interface DefenseOption {
+  id: string;
+  name: string;
+  icon: string;
+  effectiveness: 'best' | 'good' | 'bad';
+  stat: keyof WrestlerStats;
 }
 
-function opponentAI(state: MatchState, opponent: Opponent, playerStats: WrestlerStats): OpponentAction {
+export interface OpponentAttack {
+  name: string;
+  description: string;
+  icon: string;
+  points: number;
+  position: MatchPosition;           // current position
+  resultPosition: MatchPosition;     // position if attack succeeds
+  attackStat: number;                 // opponent's attack stat value
+  defenseOptions: DefenseOption[];    // 2-3 options for the player
+  nearFall: boolean;                  // does this create a near fall?
+  reactionWindowMs: number;           // how long player has to react
+}
+
+export function generateOpponentAttack(
+  state: MatchState,
+  opponent: Opponent
+): OpponentAttack | null {
   const position = state.position;
 
-  // Opponent on top (player is on bottom)
-  if (position === 'playerBottom') {
-    // Opponent tries turn/pin moves using their stats vs player's escape ability
-    const turnMoves = MOVES.filter(m => m.position.includes('playerTop'));
-    const move = turnMoves[Math.floor(Math.random() * turnMoves.length)];
-    const attackStat = opponent.stats[move.primaryStat];
-    const defenseStat = playerStats.escapeAbility;
-    const chance = calculateSuccessChance(attackStat, defenseStat, state.opponentStamina);
-
-    if (Math.random() < chance) {
-      const isPin = Math.random() < chance * 0.3;
-      return {
-        action: `Opponent hits a ${move.name.toLowerCase()}! ${move.pointsOnSuccess} near fall points!`,
-        scoreChange: move.pointsOnSuccess,
-        newPosition: position,
-        staminaCost: 10,
-        nearFall: true,
-        pinAdvance: isPin,
-      };
-    }
-    return {
-      action: 'Opponent tries to turn you but you hold position.',
-      scoreChange: 0,
-      newPosition: position,
-      staminaCost: 5,
-      nearFall: false,
-      pinAdvance: false,
-    };
-  }
-
-  // Opponent on bottom (player is on top) — opponent tries to escape/reverse
-  if (position === 'playerTop') {
-    const defenseStat = playerStats.ridingSkill;
-    const chance = calculateSuccessChance(opponent.stats.escapeAbility, defenseStat, state.opponentStamina);
-    if (Math.random() < chance) {
-      const reversed = Math.random() < 0.35;
-      return {
-        action: reversed ? 'Opponent reverses! 2 points!' : 'Opponent escapes! Back to neutral. 1 point.',
-        scoreChange: reversed ? 2 : 1,
-        newPosition: reversed ? 'playerBottom' : 'neutral',
-        staminaCost: 10,
-        nearFall: false,
-        pinAdvance: false,
-      };
-    }
-    return {
-      action: 'Opponent struggles underneath but you maintain control.',
-      scoreChange: 0,
-      newPosition: position,
-      staminaCost: 6,
-      nearFall: false,
-      pinAdvance: false,
-    };
-  }
-
-  // Neutral — opponent attacks
+  // From neutral — opponent shoots or throws
   if (position === 'neutral') {
-    const aggressiveness = opponent.style === 'offensive' ? 0.65
-      : opponent.style === 'defensive' ? 0.3
-      : opponent.style === 'scrambler' ? 0.55
-      : 0.45; // technician
+    const useThrow = opponent.stats.throwSkill > opponent.stats.takedownOffense && Math.random() < 0.3;
 
-    if (Math.random() < aggressiveness) {
-      // Decide attack type: takedown or throw
-      const useThrow = opponent.stats.throwSkill > opponent.stats.takedownOffense && Math.random() < 0.35;
-
-      if (useThrow) {
-        const throwMoves = MOVES.filter(m => m.position.includes('neutral') && m.primaryStat === 'throwSkill');
-        const move = throwMoves[Math.floor(Math.random() * throwMoves.length)];
-        const chance = calculateSuccessChance(opponent.stats.throwSkill, playerStats.takedownDefense, state.opponentStamina, opponent.stats.strength);
-
-        if (Math.random() < chance) {
-          return {
-            action: `Opponent hits a ${move.name.toLowerCase()}! ${move.pointsOnSuccess} points!`,
-            scoreChange: move.pointsOnSuccess,
-            newPosition: 'playerBottom',
-            staminaCost: 15,
-            nearFall: move.pointsOnSuccess >= 4,
-            pinAdvance: Math.random() < chance * 0.2,
-          };
-        }
-        // Failed throw — possible counter
-        if (move.type === 'headlock' && Math.random() < 0.3) {
-          return {
-            action: 'Opponent tries a headlock — you counter! You take their back — 5 points!',
-            scoreChange: -5, // negative = player scores
-            newPosition: 'playerTop',
-            staminaCost: 12,
-            nearFall: false,
-            pinAdvance: false,
-          };
-        }
-        return {
-          action: `Opponent tries a ${move.name.toLowerCase()} but you defend!`,
-          scoreChange: 0,
-          newPosition: 'neutral',
-          staminaCost: 10,
-          nearFall: false,
-          pinAdvance: false,
-        };
-      }
-
-      // Regular takedown attempt
-      const chance = calculateSuccessChance(opponent.stats.takedownOffense, playerStats.takedownDefense, state.opponentStamina);
-      if (Math.random() < chance) {
-        return {
-          action: 'Opponent shoots and scores a takedown! 2 points!',
-          scoreChange: 2,
-          newPosition: 'playerBottom',
-          staminaCost: 12,
-          nearFall: false,
-          pinAdvance: false,
-        };
-      }
+    if (useThrow) {
+      const throwMoves = ['Hip Toss', "Fireman's Carry", 'Headlock'];
+      const pick = throwMoves[Math.floor(Math.random() * throwMoves.length)];
+      const baseReaction = 2800 - (opponent.stats.throwSkill * 5); // faster with higher skill
       return {
-        action: 'Opponent shoots but you defend!',
-        scoreChange: 0,
-        newPosition: 'neutral',
-        staminaCost: 8,
-        nearFall: false,
-        pinAdvance: false,
+        name: pick,
+        description: `Opponent is setting up a ${pick.toLowerCase()}!`,
+        icon: pick === 'Headlock' ? '💫' : pick === 'Hip Toss' ? '🌀' : '🔥',
+        points: pick === 'Headlock' ? 5 : 4,
+        position: 'neutral',
+        resultPosition: 'playerBottom',
+        attackStat: opponent.stats.throwSkill,
+        nearFall: true,
+        reactionWindowMs: Math.max(1500, Math.min(3000, baseReaction)),
+        defenseOptions: [
+          { id: 'underhook', name: 'Underhook', icon: '↗', effectiveness: 'best', stat: 'takedownDefense' },
+          { id: 'circle', name: 'Circle Away', icon: '↩', effectiveness: 'good', stat: 'conditioning' },
+          { id: 'clinch', name: 'Clinch Up', icon: '🤝', effectiveness: 'bad', stat: 'strength' },
+        ],
       };
     }
+
+    // Regular shot
+    const shotTypes = ['single leg', 'double leg', 'low single'];
+    const pick = shotTypes[Math.floor(Math.random() * shotTypes.length)];
+    const baseReaction = 3000 - (opponent.stats.takedownOffense * 5);
     return {
-      action: 'Opponent circles, looking for an opening.',
-      scoreChange: 0,
-      newPosition: 'neutral',
-      staminaCost: 3,
+      name: `${pick.charAt(0).toUpperCase() + pick.slice(1)}`,
+      description: `Opponent shoots a ${pick}!`,
+      icon: '⬇',
+      points: 2,
+      position: 'neutral',
+      resultPosition: 'playerBottom',
+      attackStat: opponent.stats.takedownOffense,
       nearFall: false,
-      pinAdvance: false,
+      reactionWindowMs: Math.max(1500, Math.min(3000, baseReaction)),
+      defenseOptions: [
+        { id: 'sprawl', name: 'Sprawl', icon: '⬆', effectiveness: 'best', stat: 'takedownDefense' },
+        { id: 'crossface', name: 'Crossface', icon: '✋', effectiveness: 'good', stat: 'strength' },
+        { id: 'pullGuard', name: 'Snap Down', icon: '↙', effectiveness: 'bad', stat: 'takedownOffense' },
+      ],
     };
   }
 
-  return { action: '', scoreChange: 0, newPosition: position, staminaCost: 3, nearFall: false, pinAdvance: false };
+  // Opponent on top (player on bottom) — opponent tries turn/pin
+  if (position === 'playerBottom') {
+    const turnTypes = [
+      { name: 'Half Nelson', icon: '🔒', points: 2, stat: 'turnsAndPins' as keyof WrestlerStats },
+      { name: 'Cradle', icon: '🤝', points: 3, stat: 'turnsAndPins' as keyof WrestlerStats },
+      { name: 'Arm Bar', icon: '💪', points: 2, stat: 'ridingSkill' as keyof WrestlerStats },
+      { name: 'Tilt', icon: '↕', points: 2, stat: 'turnsAndPins' as keyof WrestlerStats },
+    ];
+    const pick = turnTypes[Math.floor(Math.random() * turnTypes.length)];
+    const baseReaction = 2600 - (opponent.stats[pick.stat] * 4);
+    return {
+      name: pick.name,
+      description: `Opponent is locking up a ${pick.name.toLowerCase()}!`,
+      icon: pick.icon,
+      points: pick.points,
+      position: 'playerBottom',
+      resultPosition: 'playerBottom',
+      attackStat: opponent.stats[pick.stat],
+      nearFall: true,
+      reactionWindowMs: Math.max(1500, Math.min(3000, baseReaction)),
+      defenseOptions: [
+        { id: 'fightHands', name: 'Fight Hands', icon: '✊', effectiveness: 'best', stat: 'escapeAbility' },
+        { id: 'bellyDown', name: 'Belly Down', icon: '⬇', effectiveness: 'good', stat: 'strength' },
+        { id: 'bridge', name: 'Bridge Out', icon: '🌉', effectiveness: 'bad', stat: 'conditioning' },
+      ],
+    };
+  }
+
+  // Player on top — opponent tries to escape/reverse
+  if (position === 'playerTop') {
+    const escapeTypes = [
+      { name: 'Stand Up', points: 1, resultPos: 'neutral' as MatchPosition },
+      { name: 'Switch', points: 2, resultPos: 'playerBottom' as MatchPosition },
+      { name: 'Sit Out', points: 1, resultPos: 'neutral' as MatchPosition },
+    ];
+    const pick = escapeTypes[Math.floor(Math.random() * escapeTypes.length)];
+    const baseReaction = 2800 - (opponent.stats.escapeAbility * 4);
+    return {
+      name: pick.name,
+      description: `Opponent is trying to ${pick.name.toLowerCase()}!`,
+      icon: pick.name === 'Switch' ? '🔄' : '⬆',
+      points: pick.points,
+      position: 'playerTop',
+      resultPosition: pick.resultPos,
+      attackStat: opponent.stats.escapeAbility,
+      nearFall: false,
+      reactionWindowMs: Math.max(1800, Math.min(3200, baseReaction)),
+      defenseOptions: [
+        { id: 'driveWeight', name: 'Drive Weight', icon: '⬇', effectiveness: 'best', stat: 'ridingSkill' },
+        { id: 'relock', name: 'Re-lock Hands', icon: '🔒', effectiveness: 'good', stat: 'strength' },
+        { id: 'followHips', name: 'Follow Hips', icon: '↩', effectiveness: 'bad', stat: 'conditioning' },
+      ],
+    };
+  }
+
+  return null;
 }
+
+export interface DefenseResult {
+  success: boolean;
+  message: string;
+  opponentScoreChange: number;
+  playerScoreChange: number;
+  newPosition: MatchPosition;
+  opponentStaminaCost: number;
+  playerStaminaCost: number;
+  opponentNearFall: boolean;
+  nearFall: boolean;
+}
+
+export function resolveOpponentAttack(
+  attack: OpponentAttack,
+  chosenDefense: DefenseOption | null, // null = timed out
+  state: MatchState,
+  playerStats: WrestlerStats,
+  opponent: Opponent
+): DefenseResult {
+  // Player timed out — opponent attack auto-succeeds
+  if (!chosenDefense) {
+    const isNearFall = attack.nearFall;
+    return {
+      success: false,
+      message: `Too slow! Opponent hits the ${attack.name.toLowerCase()}! ${attack.points} points!`,
+      opponentScoreChange: attack.points,
+      playerScoreChange: 0,
+      newPosition: attack.resultPosition,
+      opponentStaminaCost: 8,
+      playerStaminaCost: 3,
+      opponentNearFall: isNearFall,
+      nearFall: false,
+    };
+  }
+
+  // Calculate defense success based on chosen option effectiveness and player stat
+  const defStat = playerStats[chosenDefense.stat];
+  let defenseBonus = 0;
+  if (chosenDefense.effectiveness === 'best') defenseBonus = 15;
+  else if (chosenDefense.effectiveness === 'good') defenseBonus = 5;
+  else defenseBonus = -10; // bad choice
+
+  const effectiveDefense = defStat + defenseBonus;
+  const chance = calculateSuccessChance(attack.attackStat, effectiveDefense, state.opponentStamina);
+  const roll = Math.random();
+  const opponentSucceeds = roll < chance;
+
+  if (opponentSucceeds) {
+    // Opponent's attack lands despite defense attempt
+    const isNearFall = attack.nearFall;
+    return {
+      success: false,
+      message: `You try to ${chosenDefense.name.toLowerCase()} but opponent powers through the ${attack.name.toLowerCase()}! ${attack.points} points!`,
+      opponentScoreChange: attack.points,
+      playerScoreChange: 0,
+      newPosition: attack.resultPosition,
+      opponentStaminaCost: 10,
+      playerStaminaCost: 6,
+      opponentNearFall: isNearFall,
+      nearFall: false,
+    };
+  }
+
+  // Defense succeeds
+  // Check for counter opportunity on 'best' defense
+  if (chosenDefense.effectiveness === 'best' && Math.random() < 0.25) {
+    // Counter! Player scores
+    const counterPos = attack.position === 'neutral' ? 'playerTop' : attack.position === 'playerBottom' ? 'neutral' : 'playerTop';
+    const counterPoints = attack.position === 'neutral' ? 2 : 1;
+    return {
+      success: true,
+      message: `Great ${chosenDefense.name.toLowerCase()}! You counter the ${attack.name.toLowerCase()} and score ${counterPoints} points!`,
+      opponentScoreChange: 0,
+      playerScoreChange: counterPoints,
+      newPosition: counterPos,
+      opponentStaminaCost: 8,
+      playerStaminaCost: 8,
+      opponentNearFall: false,
+      nearFall: false,
+    };
+  }
+
+  return {
+    success: true,
+    message: `Good ${chosenDefense.name.toLowerCase()}! You defend the ${attack.name.toLowerCase()}.`,
+    opponentScoreChange: 0,
+    playerScoreChange: 0,
+    newPosition: state.position,
+    opponentStaminaCost: 6,
+    playerStaminaCost: 4,
+    opponentNearFall: false,
+    nearFall: false,
+  };
+}
+
+// ─── Player-initiated attacks (same as before, but no opponent counter-response) ───
 
 export interface MoveResult {
   success: boolean;
@@ -209,7 +293,7 @@ export interface MoveResult {
   pinAdvance: boolean;
 }
 
-export function executeMove(
+export function executePlayerAttack(
   moveType: MoveType,
   state: MatchState,
   playerStats: WrestlerStats,
@@ -279,8 +363,7 @@ export function executeMove(
     switch (state.position) {
       case 'neutral':
         if (move.type === 'headlock') {
-          const counterChance = 0.3;
-          if (Math.random() < counterChance) {
+          if (Math.random() < 0.3) {
             result.message = 'Your headlock is countered! Opponent takes your back — 5 points!';
             result.opponentScoreChange = 5;
             result.newPosition = 'playerBottom';
@@ -306,7 +389,75 @@ export function executeMove(
   return result;
 }
 
-export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchState {
+// ─── Apply results to match state ───
+
+export function applyPlayerAttack(
+  moveType: MoveType,
+  state: MatchState,
+  playerStats: WrestlerStats,
+  opponent: Opponent
+): MatchState {
+  const result = executePlayerAttack(moveType, state, playerStats, opponent);
+
+  let newState = { ...state };
+  newState.playerScore += result.playerScoreChange;
+  newState.opponentScore += result.opponentScoreChange;
+  newState.position = result.newPosition;
+  newState.playerStamina = Math.max(0, newState.playerStamina - result.playerStaminaCost);
+  newState.opponentStamina = Math.max(0, newState.opponentStamina - result.opponentStaminaCost);
+  newState.nearFall = result.nearFall;
+  newState.opponentNearFall = false;
+  newState.lastAction = result.message;
+
+  newState = checkTechFall(newState);
+  newState = advanceMatchTime(newState);
+  newState = recoverStamina(newState);
+
+  return newState;
+}
+
+export function applyDefenseResult(
+  result: DefenseResult,
+  state: MatchState
+): MatchState {
+  let newState = { ...state };
+  newState.opponentScore += result.opponentScoreChange;
+  newState.playerScore += result.playerScoreChange;
+  newState.position = result.newPosition;
+  newState.opponentStamina = Math.max(0, newState.opponentStamina - result.opponentStaminaCost);
+  newState.playerStamina = Math.max(0, newState.playerStamina - result.playerStaminaCost);
+  newState.opponentNearFall = result.opponentNearFall;
+  newState.nearFall = result.nearFall;
+  newState.lastAction = result.message;
+
+  newState = checkTechFall(newState);
+  newState = advanceMatchTime(newState);
+  newState = recoverStamina(newState);
+
+  return newState;
+}
+
+function checkTechFall(state: MatchState): MatchState {
+  let newState = { ...state };
+  if (newState.playerScore - newState.opponentScore >= 15) {
+    newState.isActive = false;
+    newState.lastAction += '\nTECH FALL! Dominant victory!';
+  } else if (newState.opponentScore - newState.playerScore >= 15) {
+    newState.isActive = false;
+    newState.lastAction += '\nTech fall... you lose by technical superiority.';
+  }
+  return newState;
+}
+
+function recoverStamina(state: MatchState): MatchState {
+  return {
+    ...state,
+    playerStamina: Math.min(100, state.playerStamina + 2),
+    opponentStamina: Math.min(100, state.opponentStamina + 2),
+  };
+}
+
+export function advanceMatchTime(state: MatchState, seconds: number = 6): MatchState {
   let newState = { ...state };
   newState.timeRemaining -= seconds;
 
@@ -314,7 +465,6 @@ export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchS
     if (newState.period < 3) {
       newState.period = (newState.period + 1) as 1 | 2 | 3;
       newState.timeRemaining = PERIOD_LENGTH;
-      // Alternate positions each period
       if (newState.period === 2) {
         newState.position = 'playerBottom';
         newState.lastAction = `Period 2! You start on bottom.`;
@@ -322,10 +472,8 @@ export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchS
         newState.position = 'playerTop';
         newState.lastAction = `Period 3! You start on top.`;
       }
-      // Restore some stamina between periods
       newState.playerStamina = Math.min(100, newState.playerStamina + 20);
       newState.opponentStamina = Math.min(100, newState.opponentStamina + 20);
-      // Reset near fall state between periods
       newState.nearFall = false;
       newState.opponentNearFall = false;
     } else {
@@ -334,7 +482,7 @@ export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchS
     }
   }
 
-  // Player near fall / pin tracking
+  // Player pin tracking
   if (newState.nearFall) {
     newState.pinCount += 1;
     if (newState.pinCount >= 3) {
@@ -345,7 +493,7 @@ export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchS
     newState.pinCount = Math.max(0, newState.pinCount - 1);
   }
 
-  // Opponent near fall / pin tracking
+  // Opponent pin tracking
   if (newState.opponentNearFall) {
     newState.opponentPinCount += 1;
     if (newState.opponentPinCount >= 3) {
@@ -359,62 +507,17 @@ export function advanceMatchTime(state: MatchState, seconds: number = 8): MatchS
   return newState;
 }
 
-export function processFullTurn(
-  moveType: MoveType,
-  state: MatchState,
-  playerStats: WrestlerStats,
-  opponent: Opponent
-): MatchState {
-  const moveResult = executeMove(moveType, state, playerStats, opponent);
+// ─── Timing helpers ───
 
-  let newState = { ...state };
-  newState.playerScore += moveResult.playerScoreChange;
-  newState.opponentScore += moveResult.opponentScoreChange;
-  newState.position = moveResult.newPosition;
-  newState.playerStamina = Math.max(0, newState.playerStamina - moveResult.playerStaminaCost);
-  newState.opponentStamina = Math.max(0, newState.opponentStamina - moveResult.opponentStaminaCost);
-  newState.nearFall = moveResult.nearFall;
-
-  // Reset opponent near fall — player just acted, opponent hasn't yet
-  newState.opponentNearFall = false;
-
-  let message = moveResult.message;
-
-  // Opponent always gets a response action
-  const opponentAction = opponentAI(newState, opponent, playerStats);
-
-  // Handle opponent score (negative scoreChange means player scored on a counter)
-  if (opponentAction.scoreChange < 0) {
-    newState.playerScore += Math.abs(opponentAction.scoreChange);
-  } else {
-    newState.opponentScore += opponentAction.scoreChange;
-  }
-
-  newState.position = opponentAction.newPosition;
-  newState.opponentStamina = Math.max(0, newState.opponentStamina - opponentAction.staminaCost);
-  newState.opponentNearFall = opponentAction.nearFall;
-
-  if (opponentAction.action) {
-    message += '\n' + opponentAction.action;
-  }
-
-  // Check for tech fall (15 point lead)
-  if (newState.playerScore - newState.opponentScore >= 15) {
-    newState.isActive = false;
-    message += '\nTECH FALL! Dominant victory!';
-  } else if (newState.opponentScore - newState.playerScore >= 15) {
-    newState.isActive = false;
-    message += '\nTech fall... you lose by technical superiority.';
-  }
-
-  newState.lastAction = message;
-  newState = advanceMatchTime(newState);
-
-  // Stamina recovery
-  newState.playerStamina = Math.min(100, newState.playerStamina + 2);
-  newState.opponentStamina = Math.min(100, newState.opponentStamina + 2);
-
-  return newState;
+export function getOpponentAttackInterval(opponent: Opponent): number {
+  // How often opponent initiates attacks (ms)
+  const baseInterval = 4000;
+  const styleModifier = opponent.style === 'offensive' ? -800
+    : opponent.style === 'scrambler' ? -400
+    : opponent.style === 'defensive' ? 600
+    : 0; // technician
+  const conditioningModifier = -(opponent.stats.conditioning * 5);
+  return Math.max(2500, Math.min(5500, baseInterval + styleModifier + conditioningModifier));
 }
 
 export function getMatchResult(state: MatchState): 'win' | 'loss' | 'ongoing' {
@@ -423,6 +526,8 @@ export function getMatchResult(state: MatchState): 'win' | 'loss' | 'ongoing' {
   if (state.opponentPinCount >= 3) return 'loss';
   if (state.playerScore > state.opponentScore) return 'win';
   if (state.playerScore < state.opponentScore) return 'loss';
-  // Tie goes to... random for now
   return Math.random() < 0.5 ? 'win' : 'loss';
 }
+
+// Keep old exports for backward compat (but they're no longer used by MatchScreen)
+export { calculateSuccessChance };
