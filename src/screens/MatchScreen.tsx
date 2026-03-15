@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../utils/theme';
 import { Button } from '../components/Button';
 import { MatchState, Opponent, PlayerData, MoveType, Move } from '../data/types';
@@ -11,15 +11,80 @@ interface MatchScreenProps {
   onMatchEnd: (result: 'win' | 'loss', finalState: MatchState) => void;
 }
 
+function WrestlerVisual({ position, playerName, opponentName }: { position: string; playerName: string; opponentName: string }) {
+  const getVisual = () => {
+    switch (position) {
+      case 'neutral':
+        return (
+          <View style={visualStyles.scene}>
+            <View style={visualStyles.wrestlerRow}>
+              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
+                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
+              </View>
+              <Text style={visualStyles.vsText}>vs</Text>
+              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
+                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
+              </View>
+            </View>
+            <Text style={visualStyles.posDesc}>Tied up on feet</Text>
+          </View>
+        );
+      case 'playerTop':
+        return (
+          <View style={visualStyles.scene}>
+            <View style={visualStyles.groundStack}>
+              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
+                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
+              </View>
+              <Text style={visualStyles.onTopText}>on top of</Text>
+              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler, visualStyles.bottomWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
+                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
+              </View>
+            </View>
+            <Text style={visualStyles.posDesc}>Riding — work for a turn!</Text>
+          </View>
+        );
+      case 'playerBottom':
+        return (
+          <View style={visualStyles.scene}>
+            <View style={visualStyles.groundStack}>
+              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
+                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
+              </View>
+              <Text style={visualStyles.onTopText}>on top of</Text>
+              <View style={[visualStyles.wrestler, visualStyles.playerWrestler, visualStyles.bottomWrestler]}>
+                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
+                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
+              </View>
+            </View>
+            <Text style={visualStyles.posDesc}>Escape or reverse!</Text>
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return <View style={visualStyles.container}>{getVisual()}</View>;
+}
+
 export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) {
   const [matchState, setMatchState] = useState<MatchState>(createMatchState());
   const [actionLog, setActionLog] = useState<string[]>(['Match begins! Shake hands and wrestle!']);
   const [showResult, setShowResult] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
 
   const availableMoves = getAvailableMoves(matchState.position);
 
   function handleMove(moveType: MoveType) {
-    if (!matchState.isActive) return;
+    if (!matchState.isActive || cooldown) return;
+
+    setCooldown(true);
 
     const newState = processFullTurn(moveType, matchState, player.stats, opponent);
     setMatchState(newState);
@@ -28,6 +93,9 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     if (!newState.isActive) {
       setTimeout(() => setShowResult(true), 500);
     }
+
+    // 800ms cooldown between moves
+    setTimeout(() => setCooldown(false), 800);
   }
 
   function formatTime(seconds: number): string {
@@ -108,6 +176,13 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
           <Text style={styles.positionText}>{getPositionText(matchState.position)}</Text>
         </View>
 
+        {/* Wrestler Visuals */}
+        <WrestlerVisual
+          position={matchState.position}
+          playerName={player.name.split(' ')[0]}
+          opponentName={opponent.name.split(' ')[0]}
+        />
+
         <View style={styles.staminaRow}>
           <View style={styles.staminaContainer}>
             <Text style={styles.staminaLabel}>Your Stamina</Text>
@@ -141,14 +216,18 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
 
       {/* Move Buttons */}
       <View style={styles.moveArea}>
-        <Text style={styles.moveLabel}>Your Moves:</Text>
+        <View style={styles.moveLabelRow}>
+          <Text style={styles.moveLabel}>Your Moves:</Text>
+          {cooldown && <Text style={styles.cooldownText}>Wait...</Text>}
+        </View>
         <View style={styles.moveGrid}>
           {availableMoves.map(move => (
             <TouchableOpacity
               key={move.type}
-              style={styles.moveButton}
+              style={[styles.moveButton, cooldown && styles.moveButtonDisabled]}
               onPress={() => handleMove(move.type)}
-              activeOpacity={0.7}
+              activeOpacity={cooldown ? 1 : 0.7}
+              disabled={cooldown}
             >
               <Text style={styles.moveIcon}>{move.icon}</Text>
               <Text style={styles.moveName}>{move.name}</Text>
@@ -160,6 +239,69 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     </View>
   );
 }
+
+const visualStyles = StyleSheet.create({
+  container: {
+    marginVertical: 8,
+    width: '100%',
+  },
+  scene: {
+    alignItems: 'center',
+  },
+  wrestlerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  groundStack: {
+    alignItems: 'center',
+  },
+  wrestler: {
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  playerWrestler: {
+    backgroundColor: 'rgba(46, 125, 50, 0.3)',
+    borderWidth: 1,
+    borderColor: COLORS.success,
+  },
+  opponentWrestler: {
+    backgroundColor: 'rgba(198, 40, 40, 0.3)',
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+  },
+  bottomWrestler: {
+    marginTop: -4,
+  },
+  wrestlerEmoji: {
+    fontSize: 28,
+  },
+  wrestlerLabel: {
+    color: COLORS.textWhite,
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  vsText: {
+    color: COLORS.matGray,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  onTopText: {
+    color: COLORS.matGray,
+    fontSize: 10,
+    marginVertical: 2,
+  },
+  posDesc: {
+    color: COLORS.matGray,
+    fontSize: 11,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.primaryDark },
@@ -188,7 +330,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 20,
-    marginBottom: SPACING.sm,
+    marginBottom: 4,
   },
   positionText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
   staminaRow: { flexDirection: 'row', width: '100%', gap: 12 },
@@ -221,7 +363,19 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
-  moveLabel: { ...FONTS.small, marginBottom: 6, marginLeft: 4 },
+  moveLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+    marginHorizontal: 4,
+  },
+  moveLabel: { ...FONTS.small },
+  cooldownText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   moveGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -235,6 +389,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: '22%',
     flexGrow: 1,
+  },
+  moveButtonDisabled: {
+    opacity: 0.4,
   },
   moveIcon: { fontSize: 18 },
   moveName: { color: COLORS.textWhite, fontSize: 11, fontWeight: '600', marginTop: 2 },

@@ -8,16 +8,21 @@ import { StatBar } from '../components/StatBar';
 
 interface TournamentScreenProps {
   player: PlayerData;
+  activeTournament: Tournament | null;
+  currentRound: number;
   onEnterMatch: (tournament: Tournament, roundIndex: number) => void;
   onBack: () => void;
 }
 
-export function TournamentScreen({ player, onBack, onEnterMatch }: TournamentScreenProps) {
+export function TournamentScreen({ player, activeTournament, currentRound: appRound, onBack, onEnterMatch }: TournamentScreenProps) {
   const [selectedTier, setSelectedTier] = useState<TournamentTier | null>(null);
-  const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [currentRound, setCurrentRound] = useState(0);
+  const [newTournament, setNewTournament] = useState<Tournament | null>(null);
 
   const tiers: TournamentTier[] = ['local', 'regional', 'state', 'national', 'world'];
+
+  // Use active tournament from App if we're mid-tournament, otherwise use locally created one
+  const tournament = activeTournament || newTournament;
+  const currentRound = activeTournament ? appRound : 0;
 
   function selectTier(tier: TournamentTier) {
     if (player.level < TIER_UNLOCK_LEVEL[tier]) {
@@ -26,25 +31,42 @@ export function TournamentScreen({ player, onBack, onEnterMatch }: TournamentScr
     }
     setSelectedTier(tier);
     const t = generateTournament(tier, player.weightClass);
-    setTournament(t);
-    setCurrentRound(0);
+    setNewTournament(t);
   }
 
   function enterTournament() {
     if (!tournament) return;
-    if (player.money < tournament.entryFee) {
+    if (currentRound === 0 && player.money < tournament.entryFee) {
       Alert.alert('Not Enough Money', `Entry fee is $${tournament.entryFee}. You have $${player.money}.`);
       return;
     }
     onEnterMatch(tournament, currentRound);
   }
 
-  if (tournament && selectedTier) {
+  if (tournament) {
     const currentOpponent = tournament.opponents[currentRound];
+    const isMidTournament = activeTournament != null && currentRound > 0;
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => { setTournament(null); setSelectedTier(null); }} style={styles.backBtn}>
+          <TouchableOpacity onPress={() => {
+            if (isMidTournament) {
+              Alert.alert(
+                'Forfeit Tournament?',
+                'You will lose your entry fee if you leave now.',
+                [
+                  { text: 'Stay', style: 'cancel' },
+                  { text: 'Forfeit', style: 'destructive', onPress: () => { setNewTournament(null); setSelectedTier(null); onBack(); } },
+                ]
+              );
+            } else {
+              setNewTournament(null);
+              setSelectedTier(null);
+              if (activeTournament) {
+                onBack();
+              }
+            }
+          }} style={styles.backBtn}>
             <Text style={styles.backText}>{'< Back'}</Text>
           </TouchableOpacity>
           <Text style={styles.title}>{tournament.name}</Text>
@@ -75,7 +97,9 @@ export function TournamentScreen({ player, onBack, onEnterMatch }: TournamentScr
 
           {/* Current opponent preview */}
           <View style={styles.opponentCard}>
-            <Text style={styles.sectionTitle}>Next Opponent</Text>
+            <Text style={styles.sectionTitle}>
+              {currentRound > 0 ? `Round ${currentRound + 1} Opponent` : 'Next Opponent'}
+            </Text>
             <View style={styles.oppHeader}>
               <Text style={styles.oppName}>{currentOpponent.name}</Text>
               <Text style={styles.oppStyle}>{currentOpponent.style}</Text>
@@ -91,7 +115,14 @@ export function TournamentScreen({ player, onBack, onEnterMatch }: TournamentScr
           </View>
 
           <View style={styles.entryInfo}>
-            <Text style={styles.entryText}>Entry Fee: ${tournament.entryFee}</Text>
+            {currentRound === 0 && (
+              <Text style={styles.entryText}>Entry Fee: ${tournament.entryFee}</Text>
+            )}
+            {currentRound > 0 && (
+              <Text style={[styles.entryText, { color: COLORS.success, fontWeight: '600' }]}>
+                ✅ Entry fee paid — Round {currentRound + 1} of {tournament.rounds}
+              </Text>
+            )}
             <Text style={styles.entryText}>Prize: ${tournament.prize}</Text>
             <Text style={styles.entryText}>EXP: +{tournament.expReward}</Text>
           </View>
@@ -102,7 +133,7 @@ export function TournamentScreen({ player, onBack, onEnterMatch }: TournamentScr
             variant="accent"
             size="large"
             icon="🤼"
-            disabled={player.money < tournament.entryFee}
+            disabled={currentRound === 0 && player.money < tournament.entryFee}
           />
         </ScrollView>
       </View>
