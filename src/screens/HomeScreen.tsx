@@ -1,25 +1,44 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert, Platform } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../utils/theme';
 import { Button } from '../components/Button';
 import { StatBar } from '../components/StatBar';
 import { PlayerData, Screen } from '../data/types';
 import { TIER_NAMES, getExpForLevel } from '../data/gameData';
+import { APP_VERSION } from '../utils/version';
 
 interface HomeScreenProps {
   player: PlayerData;
   onNavigate: (screen: Screen) => void;
   onNewDay: () => void;
   onOpenMat: () => void;
+  onResetPlayer: () => void;
 }
 
-export function HomeScreen({ player, onNavigate, onNewDay, onOpenMat }: HomeScreenProps) {
+export function HomeScreen({ player, onNavigate, onNewDay, onOpenMat, onResetPlayer }: HomeScreenProps) {
   const expNeeded = getExpForLevel(player.level + 1);
   const expPct = Math.min(100, (player.experience / expNeeded) * 100);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  function handleResetPress() {
+    if (Platform.OS === 'web') {
+      setShowResetConfirm(true);
+    } else {
+      Alert.alert(
+        'Start New Player',
+        'This will permanently delete your current wrestler and all progress. Are you sure?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Start Over', style: 'destructive', onPress: onResetPlayer },
+        ]
+      );
+    }
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
+        <Text style={styles.versionText}>v{APP_VERSION}</Text>
         <Text style={styles.gameName}>WRESTLING LIVE</Text>
         <Text style={styles.tagline}>Train. Compete. Dominate.</Text>
       </View>
@@ -131,6 +150,44 @@ export function HomeScreen({ player, onNavigate, onNewDay, onOpenMat }: HomeScre
         <StatBar label="Conditioning" value={player.stats.conditioning} compact />
         <StatBar label="Strength" value={player.stats.strength} compact />
       </View>
+
+      <View style={styles.resetSection}>
+        <Button
+          title="Start New Player"
+          icon="🔄"
+          onPress={handleResetPress}
+          variant="secondary"
+          size="medium"
+          style={styles.resetButton}
+        />
+      </View>
+
+      {showResetConfirm && (
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmBox}>
+            <Text style={styles.confirmTitle}>Start New Player</Text>
+            <Text style={styles.confirmText}>
+              This will permanently delete your current wrestler and all progress. Are you sure?
+            </Text>
+            <View style={styles.confirmButtons}>
+              <Button
+                title="Cancel"
+                onPress={() => setShowResetConfirm(false)}
+                variant="secondary"
+                size="medium"
+                style={styles.confirmBtn}
+              />
+              <Button
+                title="Start Over"
+                onPress={() => { setShowResetConfirm(false); onResetPlayer(); }}
+                variant="primary"
+                size="medium"
+                style={[styles.confirmBtn, { backgroundColor: COLORS.danger }]}
+              />
+            </View>
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -144,6 +201,14 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     paddingHorizontal: SPACING.lg,
     alignItems: 'center',
+  },
+  versionText: {
+    position: 'absolute',
+    top: 44,
+    right: SPACING.md,
+    fontSize: 11,
+    color: COLORS.matGray,
+    opacity: 0.7,
   },
   gameName: {
     fontSize: 32,
@@ -235,5 +300,50 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderRadius: 14,
     padding: SPACING.md,
+  },
+  resetSection: {
+    paddingHorizontal: SPACING.md,
+    marginTop: SPACING.lg,
+    marginBottom: SPACING.sm,
+  },
+  resetButton: {
+    opacity: 0.7,
+  },
+  confirmOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  confirmBox: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: SPACING.lg,
+    marginHorizontal: SPACING.lg,
+    width: '85%',
+    maxWidth: 360,
+  },
+  confirmTitle: {
+    ...FONTS.subtitle,
+    marginBottom: SPACING.sm,
+    textAlign: 'center',
+  },
+  confirmText: {
+    ...FONTS.body,
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+  },
+  confirmButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: SPACING.sm,
+  },
+  confirmBtn: {
+    flex: 1,
   },
 });

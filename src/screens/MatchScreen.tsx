@@ -137,6 +137,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
           </Text>
           <Text style={styles.resultVs}>vs {opponent.name}</Text>
           {matchState.pinCount >= 3 && <Text style={styles.pinText}>WIN BY PIN!</Text>}
+          {matchState.opponentPinCount >= 3 && <Text style={[styles.pinText, { color: COLORS.danger }]}>LOSS BY PIN!</Text>}
           {Math.abs(matchState.playerScore - matchState.opponentScore) >= 15 && (
             <Text style={styles.pinText}>TECH FALL!</Text>
           )}
@@ -201,6 +202,11 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         {matchState.nearFall && (
           <View style={styles.nearFallBanner}>
             <Text style={styles.nearFallText}>NEAR FALL! ({matchState.pinCount}/3)</Text>
+          </View>
+        )}
+        {matchState.opponentNearFall && (
+          <View style={[styles.nearFallBanner, styles.opponentNearFallBanner]}>
+            <Text style={styles.nearFallText}>DANGER! NEAR FALL! ({matchState.opponentPinCount}/3)</Text>
           </View>
         )}
       </View>
@@ -346,6 +352,9 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm,
   },
   nearFallText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
+  opponentNearFallBanner: {
+    backgroundColor: '#8B0000',
+  },
   actionLog: {
     flex: 1,
     backgroundColor: COLORS.card,

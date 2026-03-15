@@ -58,7 +58,9 @@ export interface MatchState {
   isActive: boolean;
   lastAction: string;
   nearFall: boolean;
-  pinCount: number;            // 0-3, if reaches 3 = pin
+  pinCount: number;            // 0-3, if reaches 3 = pin (player pinning opponent)
+  opponentNearFall: boolean;
+  opponentPinCount: number;    // 0-3, if reaches 3 = opponent pins player
 }
 
 export interface Opponent {
