@@ -45,6 +45,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   const clockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const showResultRef = useRef(showResult);
   const currentAttackRef = useRef(currentAttack);
+  const lastPlayerAttackRef = useRef(0); // timestamp of last player attack
 
   matchStateRef.current = matchState;
   phaseRef.current = phase;
@@ -53,7 +54,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
 
   const availableMoves = getAvailableMoves(matchState.position);
 
-  // ─── Real-time match clock (ticks every second) ───
+  // ─── Real-time match clock (4x speed: 2min period = ~30s real time) ───
   useEffect(() => {
     clockTimerRef.current = setInterval(() => {
       setMatchState(prev => {
@@ -79,7 +80,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         }
         return { ...prev, timeRemaining: newTime };
       });
-    }, 1000);
+    }, 250); // 250ms per game-second = 4x speed
     return () => { if (clockTimerRef.current) clearInterval(clockTimerRef.current); };
   }, []);
 
@@ -114,6 +115,14 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         // Don't attack if already in defense phase — wait and try again soon
         if (phaseRef.current !== 'attacking') {
           attackTimerRef.current = setTimeout(scheduleNext, 500 + Math.floor(Math.random() * 500));
+          return;
+        }
+
+        // Don't attack if player just attacked — wait for cooldown
+        const timeSincePlayerAttack = Date.now() - lastPlayerAttackRef.current;
+        if (timeSincePlayerAttack < 1500) {
+          const waitMore = 1500 - timeSincePlayerAttack + Math.floor(Math.random() * 800);
+          attackTimerRef.current = setTimeout(scheduleNext, waitMore);
           return;
         }
 
@@ -202,8 +211,8 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     if (!matchState.isActive || cooldown || phase !== 'attacking') return;
 
     setCooldown(true);
+    lastPlayerAttackRef.current = Date.now();
 
-    // Don't cancel opponent timer — it runs independently
     const newState = applyPlayerAttack(moveType, matchState, player.stats, opponent);
     setMatchState(newState);
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);

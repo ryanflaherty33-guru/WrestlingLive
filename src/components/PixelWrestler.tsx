@@ -4,7 +4,7 @@ import { View, StyleSheet } from 'react-native';
 // Each pose is an array of strings. Each character maps to a color:
 // '.' = transparent, 'h' = hair, 's' = skin, 'u' = uniform (team color), 'b' = boots, 'o' = outline
 
-const PIXEL_SIZE = 6;
+const PIXEL_SIZE = 8;
 
 const SKIN = '#F4C794';
 const SKIN_SHADOW = '#D4A874';
@@ -352,7 +352,7 @@ export function PixelScene({ position, attackMove, isDefending }: PixelSceneProp
             teamColor={topColor}
             teamColorDark={topColorDark}
             mirrored={topMirrored}
-            scale={1.5}
+            scale={1.8}
           />
         </View>
         <PixelWrestler
@@ -360,7 +360,7 @@ export function PixelScene({ position, attackMove, isDefending }: PixelSceneProp
           teamColor={bottomColor}
           teamColorDark={bottomColorDark}
           mirrored={bottomMirrored}
-          scale={1.5}
+          scale={1.8}
         />
         {/* Mat shadow */}
         <View style={sceneStyles.matShadow} />
@@ -378,7 +378,7 @@ export function PixelScene({ position, attackMove, isDefending }: PixelSceneProp
             teamColor={PLAYER_COLOR}
             teamColorDark={PLAYER_COLOR_DARK}
             mirrored={playerMirrored}
-            scale={1.5}
+            scale={1.8}
           />
         </View>
         <PixelWrestler
@@ -386,7 +386,7 @@ export function PixelScene({ position, attackMove, isDefending }: PixelSceneProp
           teamColor={OPPONENT_COLOR}
           teamColorDark={OPPONENT_COLOR_DARK}
           mirrored={opponentMirrored}
-          scale={1.5}
+          scale={1.8}
         />
       </View>
       {/* Mat shadow */}
@@ -407,10 +407,10 @@ const sceneStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   matShadow: {
-    width: 120,
-    height: 6,
+    width: 160,
+    height: 8,
     backgroundColor: MAT_SHADOW,
-    borderRadius: 60,
+    borderRadius: 80,
     marginTop: 4,
   },
 });
