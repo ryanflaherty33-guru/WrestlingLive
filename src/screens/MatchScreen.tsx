@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../utils/theme';
 import { Button } from '../components/Button';
+import { PixelScene } from '../components/PixelWrestler';
 import { MatchState, Opponent, PlayerData, MoveType, Move } from '../data/types';
 import {
   createMatchState,
@@ -24,68 +25,6 @@ interface MatchScreenProps {
 
 type MatchPhase = 'attacking' | 'defending';
 
-function WrestlerVisual({ position, playerName, opponentName }: { position: string; playerName: string; opponentName: string }) {
-  const getVisual = () => {
-    switch (position) {
-      case 'neutral':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.wrestlerRow}>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-              <Text style={visualStyles.vsText}>vs</Text>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧍</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Tied up on feet</Text>
-          </View>
-        );
-      case 'playerTop':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.groundStack}>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-              <Text style={visualStyles.onTopText}>on top of</Text>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler, visualStyles.bottomWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Riding — work for a turn!</Text>
-          </View>
-        );
-      case 'playerBottom':
-        return (
-          <View style={visualStyles.scene}>
-            <View style={visualStyles.groundStack}>
-              <View style={[visualStyles.wrestler, visualStyles.opponentWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🏋️</Text>
-                <Text style={visualStyles.wrestlerLabel}>{opponentName}</Text>
-              </View>
-              <Text style={visualStyles.onTopText}>on top of</Text>
-              <View style={[visualStyles.wrestler, visualStyles.playerWrestler, visualStyles.bottomWrestler]}>
-                <Text style={visualStyles.wrestlerEmoji}>🧎</Text>
-                <Text style={visualStyles.wrestlerLabel}>{playerName}</Text>
-              </View>
-            </View>
-            <Text style={visualStyles.posDesc}>Escape or reverse!</Text>
-          </View>
-        );
-      default:
-        return null;
-    }
-  };
-
-  return <View style={visualStyles.container}>{getVisual()}</View>;
-}
-
 export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) {
   const [matchState, setMatchState] = useState<MatchState>(createMatchState());
   const [actionLog, setActionLog] = useState<string[]>(['Match begins! Shake hands and wrestle!']);
@@ -101,55 +40,96 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   // Refs to access latest state in timers
   const matchStateRef = useRef(matchState);
   const phaseRef = useRef(phase);
-  const attackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reactionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const showResultRef = useRef(showResult);
+  const currentAttackRef = useRef(currentAttack);
 
   matchStateRef.current = matchState;
   phaseRef.current = phase;
   showResultRef.current = showResult;
+  currentAttackRef.current = currentAttack;
 
   const availableMoves = getAvailableMoves(matchState.position);
 
-  // ─── Schedule next opponent attack ───
-  const scheduleOpponentAttack = useCallback(() => {
-    if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
+  // ─── Real-time match clock (ticks every second) ───
+  useEffect(() => {
+    clockTimerRef.current = setInterval(() => {
+      setMatchState(prev => {
+        if (!prev.isActive) return prev;
+        const newTime = prev.timeRemaining - 1;
+        if (newTime <= 0) {
+          if (prev.period < 3) {
+            const nextPeriod = (prev.period + 1) as 1 | 2 | 3;
+            return {
+              ...prev,
+              period: nextPeriod,
+              timeRemaining: 120,
+              position: nextPeriod === 2 ? 'playerBottom' : 'playerTop',
+              playerStamina: Math.min(100, prev.playerStamina + 20),
+              opponentStamina: Math.min(100, prev.opponentStamina + 20),
+              nearFall: false,
+              opponentNearFall: false,
+              lastAction: nextPeriod === 2 ? 'Period 2! You start on bottom.' : 'Period 3! You start on top.',
+            };
+          } else {
+            return { ...prev, timeRemaining: 0, isActive: false, lastAction: 'Match is over!' };
+          }
+        }
+        return { ...prev, timeRemaining: newTime };
+      });
+    }, 1000);
+    return () => { if (clockTimerRef.current) clearInterval(clockTimerRef.current); };
+  }, []);
 
+  // When match ends (from clock, pin, or tech fall), show result
+  useEffect(() => {
+    if (!matchState.isActive && !showResult) {
+      if (clockTimerRef.current) clearInterval(clockTimerRef.current);
+      if (attackTimerRef.current) clearInterval(attackTimerRef.current);
+      if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+      setPhase('attacking');
+      setCurrentAttack(null);
+      setTimeout(() => setShowResult(true), 500);
+    }
+  }, [matchState.isActive, showResult]);
+
+  // ─── Independent opponent attack loop ───
+  useEffect(() => {
     const interval = getOpponentAttackInterval(opponent);
-    // Add some randomness
-    const delay = interval + Math.floor(Math.random() * 1500) - 500;
 
-    attackTimerRef.current = setTimeout(() => {
+    function tryAttack() {
       const state = matchStateRef.current;
       if (!state.isActive || showResultRef.current) return;
-      if (phaseRef.current !== 'attacking') {
-        // If already defending, reschedule
-        scheduleOpponentAttack();
-        return;
-      }
+
+      // Don't attack if already in defense phase
+      if (phaseRef.current !== 'attacking') return;
 
       const attack = generateOpponentAttack(state, opponent);
-      if (!attack) {
-        scheduleOpponentAttack();
-        return;
-      }
+      if (!attack) return;
 
       setCurrentAttack(attack);
       setPhase('defending');
       setReactionTimeLeft(attack.reactionWindowMs);
       setReactionTotal(attack.reactionWindowMs);
       setActionLog(prev => [attack.description, ...prev.slice(0, 20)]);
-    }, delay);
-  }, [opponent]);
+    }
 
-  // ─── Start opponent attack timer on mount ───
-  useEffect(() => {
-    scheduleOpponentAttack();
+    // Start with a short delay so match doesn't immediately go to defense
+    const initialDelay = setTimeout(() => {
+      tryAttack();
+      // Then keep attacking on interval
+      attackTimerRef.current = setInterval(() => {
+        tryAttack();
+      }, interval + Math.floor(Math.random() * 1000));
+    }, 1500 + Math.floor(Math.random() * 1000));
+
     return () => {
-      if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
-      if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
+      clearTimeout(initialDelay);
+      if (attackTimerRef.current) clearInterval(attackTimerRef.current);
     };
-  }, [scheduleOpponentAttack]);
+  }, [opponent]);
 
   // ─── Reaction countdown ───
   useEffect(() => {
@@ -161,7 +141,6 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         setReactionTimeLeft(prev => {
           const next = prev - tickMs;
           if (next <= 0) {
-            // Time's up! Opponent attack auto-succeeds
             if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
             handleDefenseTimeout();
             return 0;
@@ -180,7 +159,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     const state = matchStateRef.current;
     if (!state.isActive) return;
 
-    const attack = currentAttack;
+    const attack = currentAttackRef.current;
     if (!attack) return;
 
     const result = resolveOpponentAttack(attack, null, state, player.stats, opponent);
@@ -190,12 +169,6 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
     setPhase('attacking');
     setCurrentAttack(null);
-
-    if (!newState.isActive) {
-      setTimeout(() => setShowResult(true), 500);
-    } else {
-      scheduleOpponentAttack();
-    }
   }
 
   function handleDefenseChoice(defense: DefenseOption) {
@@ -211,12 +184,6 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
     setPhase('attacking');
     setCurrentAttack(null);
-
-    if (!newState.isActive) {
-      setTimeout(() => setShowResult(true), 500);
-    } else {
-      scheduleOpponentAttack();
-    }
   }
 
   function handlePlayerAttack(moveType: MoveType) {
@@ -224,18 +191,10 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
 
     setCooldown(true);
 
-    // Cancel pending opponent attack and reschedule after
-    if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
-
+    // Don't cancel opponent timer — it runs independently
     const newState = applyPlayerAttack(moveType, matchState, player.stats, opponent);
     setMatchState(newState);
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
-
-    if (!newState.isActive) {
-      setTimeout(() => setShowResult(true), 500);
-    } else {
-      scheduleOpponentAttack();
-    }
 
     setTimeout(() => setCooldown(false), 800);
   }
@@ -322,11 +281,23 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
           <Text style={styles.positionText}>{getPositionText(matchState.position)}</Text>
         </View>
 
-        <WrestlerVisual
+        <PixelScene
           position={matchState.position}
-          playerName={player.name.split(' ')[0]}
-          opponentName={opponent.name.split(' ')[0]}
+          attackMove={currentAttack?.name}
+          isDefending={phase === 'defending'}
         />
+
+        <View style={styles.wrestlerLabels}>
+          <View style={styles.wrestlerLabelBadge}>
+            <View style={[styles.colorDot, { backgroundColor: '#2E7D32' }]} />
+            <Text style={styles.wrestlerLabelText}>{player.name.split(' ')[0]}</Text>
+          </View>
+          <Text style={styles.vsText}>vs</Text>
+          <View style={styles.wrestlerLabelBadge}>
+            <View style={[styles.colorDot, { backgroundColor: '#C62828' }]} />
+            <Text style={styles.wrestlerLabelText}>{opponent.name.split(' ')[0]}</Text>
+          </View>
+        </View>
 
         <View style={styles.staminaRow}>
           <View style={styles.staminaContainer}>
@@ -423,69 +394,6 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   );
 }
 
-const visualStyles = StyleSheet.create({
-  container: {
-    marginVertical: 8,
-    width: '100%',
-  },
-  scene: {
-    alignItems: 'center',
-  },
-  wrestlerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  groundStack: {
-    alignItems: 'center',
-  },
-  wrestler: {
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  playerWrestler: {
-    backgroundColor: 'rgba(46, 125, 50, 0.3)',
-    borderWidth: 1,
-    borderColor: COLORS.success,
-  },
-  opponentWrestler: {
-    backgroundColor: 'rgba(198, 40, 40, 0.3)',
-    borderWidth: 1,
-    borderColor: COLORS.danger,
-  },
-  bottomWrestler: {
-    marginTop: -4,
-  },
-  wrestlerEmoji: {
-    fontSize: 28,
-  },
-  wrestlerLabel: {
-    color: COLORS.textWhite,
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  vsText: {
-    color: COLORS.matGray,
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  onTopText: {
-    color: COLORS.matGray,
-    fontSize: 10,
-    marginVertical: 2,
-  },
-  posDesc: {
-    color: COLORS.matGray,
-    fontSize: 11,
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-});
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.primaryDark },
   scoreboard: {
@@ -520,6 +428,32 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   positionText: { color: COLORS.textWhite, fontWeight: 'bold', fontSize: 16 },
+  wrestlerLabels: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 6,
+  },
+  wrestlerLabelBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  colorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  wrestlerLabelText: {
+    color: COLORS.textWhite,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  vsText: {
+    color: COLORS.matGray,
+    fontSize: 10,
+  },
   staminaRow: { flexDirection: 'row', width: '100%', gap: 12 },
   staminaContainer: { flex: 1 },
   staminaLabel: { color: COLORS.textWhite, fontSize: 11, marginBottom: 2 },

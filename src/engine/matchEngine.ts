@@ -410,7 +410,7 @@ export function applyPlayerAttack(
   newState.lastAction = result.message;
 
   newState = checkTechFall(newState);
-  newState = advanceMatchTime(newState);
+  newState = trackPins(newState);
   newState = recoverStamina(newState);
 
   return newState;
@@ -431,7 +431,7 @@ export function applyDefenseResult(
   newState.lastAction = result.message;
 
   newState = checkTechFall(newState);
-  newState = advanceMatchTime(newState);
+  newState = trackPins(newState);
   newState = recoverStamina(newState);
 
   return newState;
@@ -457,30 +457,8 @@ function recoverStamina(state: MatchState): MatchState {
   };
 }
 
-export function advanceMatchTime(state: MatchState, seconds: number = 6): MatchState {
+function trackPins(state: MatchState): MatchState {
   let newState = { ...state };
-  newState.timeRemaining -= seconds;
-
-  if (newState.timeRemaining <= 0) {
-    if (newState.period < 3) {
-      newState.period = (newState.period + 1) as 1 | 2 | 3;
-      newState.timeRemaining = PERIOD_LENGTH;
-      if (newState.period === 2) {
-        newState.position = 'playerBottom';
-        newState.lastAction = `Period 2! You start on bottom.`;
-      } else {
-        newState.position = 'playerTop';
-        newState.lastAction = `Period 3! You start on top.`;
-      }
-      newState.playerStamina = Math.min(100, newState.playerStamina + 20);
-      newState.opponentStamina = Math.min(100, newState.opponentStamina + 20);
-      newState.nearFall = false;
-      newState.opponentNearFall = false;
-    } else {
-      newState.isActive = false;
-      newState.lastAction = 'Match is over!';
-    }
-  }
 
   // Player pin tracking
   if (newState.nearFall) {
