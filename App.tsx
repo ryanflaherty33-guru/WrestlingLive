@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text } from 'react-native';
 import { PlayerData, Screen, WrestlerStats, Tournament, MatchState } from './src/data/types';
-import { getExpForLevel, TIER_UNLOCK_LEVEL } from './src/data/gameData';
+import { getExpForLevel, TIER_UNLOCK_LEVEL, generateOpponent } from './src/data/gameData';
 import { getMatchResult } from './src/engine/matchEngine';
 import { savePlayer, loadPlayer } from './src/utils/storage';
 import { COLORS } from './src/utils/theme';
@@ -23,6 +23,8 @@ export default function App() {
   // Tournament state
   const [activeTournament, setActiveTournament] = useState<Tournament | null>(null);
   const [currentRound, setCurrentRound] = useState(0);
+  const [isOpenMat, setIsOpenMat] = useState(false);
+  const [openMatOpponent, setOpenMatOpponent] = useState<import('./src/data/types').Opponent | null>(null);
 
   useEffect(() => {
     loadPlayer().then(saved => {
@@ -97,6 +99,14 @@ export default function App() {
     persistPlayer(updated);
   }
 
+  function handleOpenMat() {
+    if (!player) return;
+    const opp = generateOpponent('local', player.weightClass);
+    setOpenMatOpponent(opp);
+    setIsOpenMat(true);
+    setCurrentScreen('match');
+  }
+
   function handleEnterMatch(tournament: Tournament, roundIndex: number) {
     if (!player) return;
 
@@ -110,7 +120,30 @@ export default function App() {
   }
 
   function handleMatchEnd(result: 'win' | 'loss', finalState: MatchState) {
-    if (!player || !activeTournament) return;
+    if (!player) return;
+
+    // Open Mat (exhibition) match
+    if (isOpenMat) {
+      let updated = { ...player };
+      if (result === 'win') {
+        updated.record.wins += 1;
+        if (finalState.pinCount >= 3) updated.record.pins += 1;
+        const payout = 15 + Math.floor(Math.random() * 16); // $15-30
+        updated.money += payout;
+        updated.experience += 10;
+      } else {
+        updated.record.losses += 1;
+        updated.experience += 3;
+      }
+      updated = checkLevelUp(updated);
+      persistPlayer(updated);
+      setIsOpenMat(false);
+      setOpenMatOpponent(null);
+      setCurrentScreen('home');
+      return;
+    }
+
+    if (!activeTournament) return;
 
     let updated = { ...player };
 
@@ -171,6 +204,7 @@ export default function App() {
             player={player}
             onNavigate={handleNavigate}
             onNewDay={handleNewDay}
+            onOpenMat={handleOpenMat}
           />
         );
       case 'practice':
@@ -193,16 +227,19 @@ export default function App() {
         return (
           <TournamentScreen
             player={player}
+            activeTournament={activeTournament}
+            currentRound={currentRound}
             onEnterMatch={handleEnterMatch}
             onBack={() => { setActiveTournament(null); setCurrentScreen('home'); }}
           />
         );
       case 'match':
-        if (!activeTournament) return null;
+        const matchOpponent = isOpenMat ? openMatOpponent : activeTournament?.opponents[currentRound];
+        if (!matchOpponent) return null;
         return (
           <MatchScreen
             player={player}
-            opponent={activeTournament.opponents[currentRound]}
+            opponent={matchOpponent}
             onMatchEnd={handleMatchEnd}
           />
         );

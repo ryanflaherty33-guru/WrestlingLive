@@ -10,9 +10,10 @@ interface HomeScreenProps {
   player: PlayerData;
   onNavigate: (screen: Screen) => void;
   onNewDay: () => void;
+  onOpenMat: () => void;
 }
 
-export function HomeScreen({ player, onNavigate, onNewDay }: HomeScreenProps) {
+export function HomeScreen({ player, onNavigate, onNewDay, onOpenMat }: HomeScreenProps) {
   const expNeeded = getExpForLevel(player.level + 1);
   const expPct = Math.min(100, (player.experience / expNeeded) * 100);
 
@@ -97,6 +98,19 @@ export function HomeScreen({ player, onNavigate, onNewDay }: HomeScreenProps) {
           style={styles.menuButton}
         />
       </View>
+
+      {player.money < 25 && (
+        <View style={styles.openMatBanner}>
+          <Text style={styles.openMatText}>Low on cash? Hit the open mat for free!</Text>
+          <Button
+            title="Open Mat (Free)"
+            icon="🤼"
+            onPress={onOpenMat}
+            variant="accent"
+            size="medium"
+          />
+        </View>
+      )}
 
       {(player.trainedToday || player.practicedToday) && (
         <Button
@@ -196,6 +210,21 @@ const styles = StyleSheet.create({
   },
   menuButton: {
     marginVertical: 6,
+  },
+  openMatBanner: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    padding: SPACING.md,
+    borderWidth: 2,
+    borderColor: COLORS.accent,
+  },
+  openMatText: {
+    ...FONTS.body,
+    marginBottom: SPACING.sm,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   nextDayButton: {
     marginHorizontal: SPACING.md,
