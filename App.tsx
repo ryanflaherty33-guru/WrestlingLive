@@ -4,7 +4,7 @@ import { StyleSheet, View, Text } from 'react-native';
 import { PlayerData, Screen, WrestlerStats, Tournament, MatchState } from './src/data/types';
 import { getExpForLevel, TIER_UNLOCK_LEVEL, generateOpponent } from './src/data/gameData';
 import { getMatchResult } from './src/engine/matchEngine';
-import { savePlayer, loadPlayer } from './src/utils/storage';
+import { savePlayer, loadPlayer, deletePlayer } from './src/utils/storage';
 import { COLORS } from './src/utils/theme';
 
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -73,6 +73,16 @@ export default function App() {
 
   function handleNavigate(screen: Screen) {
     setCurrentScreen(screen);
+  }
+
+  function handleResetPlayer() {
+    deletePlayer();
+    setPlayer(null);
+    setCurrentScreen('home');
+    setActiveTournament(null);
+    setCurrentRound(0);
+    setIsOpenMat(false);
+    setOpenMatOpponent(null);
   }
 
   function handleNewDay() {
@@ -205,6 +215,7 @@ export default function App() {
             onNavigate={handleNavigate}
             onNewDay={handleNewDay}
             onOpenMat={handleOpenMat}
+            onResetPlayer={handleResetPlayer}
           />
         );
       case 'practice':
