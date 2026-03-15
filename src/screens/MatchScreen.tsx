@@ -40,11 +40,12 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   // Refs to access latest state in timers
   const matchStateRef = useRef(matchState);
   const phaseRef = useRef(phase);
-  const attackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const attackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reactionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const showResultRef = useRef(showResult);
   const currentAttackRef = useRef(currentAttack);
+  const lastPlayerAttackRef = useRef(0); // timestamp of last player attack
 
   matchStateRef.current = matchState;
   phaseRef.current = phase;
@@ -53,7 +54,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
 
   const availableMoves = getAvailableMoves(matchState.position);
 
-  // ─── Real-time match clock (ticks every second) ───
+  // ─── Real-time match clock (4x speed: 2min period = ~30s real time) ───
   useEffect(() => {
     clockTimerRef.current = setInterval(() => {
       setMatchState(prev => {
@@ -79,7 +80,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
         }
         return { ...prev, timeRemaining: newTime };
       });
-    }, 1000);
+    }, 250); // 250ms per game-second = 4x speed
     return () => { if (clockTimerRef.current) clearInterval(clockTimerRef.current); };
   }, []);
 
@@ -87,7 +88,7 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
   useEffect(() => {
     if (!matchState.isActive && !showResult) {
       if (clockTimerRef.current) clearInterval(clockTimerRef.current);
-      if (attackTimerRef.current) clearInterval(attackTimerRef.current);
+      if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
       if (reactionTimerRef.current) clearInterval(reactionTimerRef.current);
       setPhase('attacking');
       setCurrentAttack(null);
@@ -95,39 +96,59 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     }
   }, [matchState.isActive, showResult]);
 
-  // ─── Independent opponent attack loop ───
+  // ─── Independent opponent attack loop (random timing) ───
   useEffect(() => {
-    const interval = getOpponentAttackInterval(opponent);
+    const baseInterval = getOpponentAttackInterval(opponent);
+    let cancelled = false;
 
-    function tryAttack() {
-      const state = matchStateRef.current;
-      if (!state.isActive || showResultRef.current) return;
+    function scheduleNext() {
+      if (cancelled) return;
+      // Random delay: base interval +/- 40% variance
+      const variance = baseInterval * 0.4;
+      const delay = baseInterval + Math.floor(Math.random() * variance * 2) - variance;
 
-      // Don't attack if already in defense phase
-      if (phaseRef.current !== 'attacking') return;
+      attackTimerRef.current = setTimeout(() => {
+        if (cancelled) return;
+        const state = matchStateRef.current;
+        if (!state.isActive || showResultRef.current) return;
 
-      const attack = generateOpponentAttack(state, opponent);
-      if (!attack) return;
+        // Don't attack if already in defense phase — wait and try again soon
+        if (phaseRef.current !== 'attacking') {
+          attackTimerRef.current = setTimeout(scheduleNext, 500 + Math.floor(Math.random() * 500));
+          return;
+        }
 
-      setCurrentAttack(attack);
-      setPhase('defending');
-      setReactionTimeLeft(attack.reactionWindowMs);
-      setReactionTotal(attack.reactionWindowMs);
-      setActionLog(prev => [attack.description, ...prev.slice(0, 20)]);
+        // Don't attack if player just attacked — wait for cooldown
+        const timeSincePlayerAttack = Date.now() - lastPlayerAttackRef.current;
+        if (timeSincePlayerAttack < 1500) {
+          const waitMore = 1500 - timeSincePlayerAttack + Math.floor(Math.random() * 800);
+          attackTimerRef.current = setTimeout(scheduleNext, waitMore);
+          return;
+        }
+
+        const attack = generateOpponentAttack(state, opponent);
+        if (attack) {
+          setCurrentAttack(attack);
+          setPhase('defending');
+          setReactionTimeLeft(attack.reactionWindowMs);
+          setReactionTotal(attack.reactionWindowMs);
+          setActionLog(prev => [attack.description, ...prev.slice(0, 20)]);
+        }
+
+        // Schedule next attack with fresh random timing
+        scheduleNext();
+      }, delay);
     }
 
-    // Start with a short delay so match doesn't immediately go to defense
+    // Initial random delay before first attack
     const initialDelay = setTimeout(() => {
-      tryAttack();
-      // Then keep attacking on interval
-      attackTimerRef.current = setInterval(() => {
-        tryAttack();
-      }, interval + Math.floor(Math.random() * 1000));
-    }, 1500 + Math.floor(Math.random() * 1000));
+      scheduleNext();
+    }, 2000 + Math.floor(Math.random() * 2000));
 
     return () => {
+      cancelled = true;
       clearTimeout(initialDelay);
-      if (attackTimerRef.current) clearInterval(attackTimerRef.current);
+      if (attackTimerRef.current) clearTimeout(attackTimerRef.current);
     };
   }, [opponent]);
 
@@ -190,8 +211,8 @@ export function MatchScreen({ player, opponent, onMatchEnd }: MatchScreenProps) 
     if (!matchState.isActive || cooldown || phase !== 'attacking') return;
 
     setCooldown(true);
+    lastPlayerAttackRef.current = Date.now();
 
-    // Don't cancel opponent timer — it runs independently
     const newState = applyPlayerAttack(moveType, matchState, player.stats, opponent);
     setMatchState(newState);
     setActionLog(prev => [newState.lastAction, ...prev.slice(0, 20)]);
