@@ -38,7 +38,9 @@ import {
 
 const { width: W, height: H } = Dimensions.get('window');
 const CFG: TrackConfig = { W, laneGap: W * 0.28, rowH: 132 };
-const CAMERA_ANCHOR = H * 0.32; // spark sits this far from the top of the screen
+// The spark rides UP the screen: it sits low (thumb-friendly) and upcoming
+// track scrolls in from the top, so a thumb at the bottom never hides the path.
+const SPARK_SCREEN_Y = H * 0.7;
 const ORB_RADIUS = 28;
 
 interface Particle {
@@ -193,9 +195,8 @@ function step(g: GameState, dtMs: number) {
   const speed = speedForCircuit(g.circuit) * ramp;
 
   // Keep track generated well past the screen.
-  const camY = g.spark.y - CAMERA_ANCHOR;
-  if (g.track.endY < camY + H * 1.8) {
-    extendTrack(CFG, g.track, g.circuit, camY + H * 2.2);
+  if (g.track.endY < g.spark.y + H * 1.6) {
+    extendTrack(CFG, g.track, g.circuit, g.spark.y + H * 2.0);
   }
 
   let d = speed * dt;
@@ -280,7 +281,7 @@ function step(g: GameState, dtMs: number) {
   updateParticles(g, dt);
   g.shake = Math.max(0, g.shake - dt * 2.2);
 
-  const removed = pruneTrack(g.track, camY - 400, g.consumeIx);
+  const removed = pruneTrack(g.track, g.spark.y - 450, g.consumeIx);
   g.consumeIx -= removed;
 }
 
@@ -422,7 +423,8 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
 
   const g = gref.current;
   const pal = PALETTES[(g.circuit - 1) % PALETTES.length];
-  const camY = g.spark.y - CAMERA_ANCHOR;
+  // Screen y for a world y: larger world y (further ahead) is higher on screen.
+  const camBase = g.spark.y + SPARK_SCREEN_Y;
   const shakeX = g.shake > 0 ? (Math.random() - 0.5) * 16 * g.shake : 0;
   const shakeY = g.shake > 0 ? (Math.random() - 0.5) * 16 * g.shake : 0;
 
@@ -446,16 +448,16 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
   // ---- Build visible scene ----
   const visible: Section[] = [];
   for (const s of g.track.sections) {
-    if (s.endY < camY - 60 || s.startY > camY + H + 60) continue;
+    if (s.endY < camBase - H - 60 || s.startY > camBase + 60) continue;
     visible.push(s);
   }
 
   const gridLines = useMemo(() => {
     return [0, 1, 2].map((l) => W / 2 + (l - 1) * CFG.laneGap);
   }, []);
-  const gridTop = Math.floor(camY / CFG.rowH) * CFG.rowH;
+  const gridTop = Math.floor((camBase - H) / CFG.rowH) * CFG.rowH;
   const hRows: number[] = [];
-  for (let y = gridTop; y < camY + H + CFG.rowH; y += CFG.rowH) hRows.push(y);
+  for (let y = gridTop; y < camBase + CFG.rowH; y += CFG.rowH) hRows.push(y);
 
   const invuln = g.now < g.invulnUntil;
   const sparkFlicker = invuln ? (Math.floor(g.now / 90) % 2 === 0 ? 0.35 : 1) : 1;
@@ -465,7 +467,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
   const orbPulse = 1 + 0.18 * Math.sin(g.now / 130);
 
   return (
-    <Pressable style={[styles.root, { backgroundColor: pal.bg }]} onPress={onTap}>
+    <Pressable style={[styles.root, { backgroundColor: pal.bg }]} onPressIn={onTap}>
       <Svg
         width={W}
         height={H}
@@ -479,9 +481,9 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
           <Line
             key={`h${y}`}
             x1={0}
-            y1={y - camY}
+            y1={camBase - y}
             x2={W}
-            y2={y - camY}
+            y2={camBase - y}
             stroke={pal.grid}
             strokeWidth={1}
           />
@@ -490,7 +492,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
         {/* world, camera-shifted */}
         {visible.map((s, si) => {
           if (s.kind === 'wire') {
-            const pts = s.poly.map((p) => ({ x: p.x, y: p.y - camY }));
+            const pts = s.poly.map((p) => ({ x: p.x, y: camBase - p.y }));
             return <GlowLine key={`w${si}-${s.startY}`} pts={pts} color={pal.primary} bright />;
           }
           const f = s.fork;
@@ -498,7 +500,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
             <React.Fragment key={`f${f.id}`}>
               {f.branches.map((br, bi) => {
                 const active = f.resolved ? f.chosen === bi : f.gate === bi;
-                const pts = br.poly.map((p) => ({ x: p.x, y: p.y - camY }));
+                const pts = br.poly.map((p) => ({ x: p.x, y: camBase - p.y }));
                 return (
                   <GlowLine
                     key={bi}
@@ -509,14 +511,14 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
                 );
               })}
               {!f.resolved && <GateChevron fork={{ ...f, branches: [
-                { ...f.branches[0], legs: f.branches[0].legs.map((l) => ({ ...l, y1: l.y1 - camY, y2: l.y2 - camY })) },
-                { ...f.branches[1], legs: f.branches[1].legs.map((l) => ({ ...l, y1: l.y1 - camY, y2: l.y2 - camY })) },
+                { ...f.branches[0], legs: f.branches[0].legs.map((l) => ({ ...l, y1: camBase - l.y1, y2: camBase - l.y2 })) },
+                { ...f.branches[1], legs: f.branches[1].legs.map((l) => ({ ...l, y1: camBase - l.y1, y2: camBase - l.y2 })) },
               ] }} color={pal.accent} />}
               {f.branches.map((br, bi) =>
                 br.breaker ? (
                   <BreakerMark
                     key={`b${bi}`}
-                    b={{ ...br.breaker, y: br.breaker.y - camY }}
+                    b={{ ...br.breaker, y: camBase - br.breaker.y }}
                     now={g.now}
                     blownOut={br.breaker.blown}
                   />
@@ -528,8 +530,8 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
 
         {/* orbs */}
         {g.track.orbs.map((o) => {
-          if (o.taken || o.y < camY - 40 || o.y > camY + H + 40) return null;
-          const y = o.y - camY;
+          if (o.taken || o.y < camBase - H - 40 || o.y > camBase + 40) return null;
+          const y = camBase - o.y;
           return (
             <React.Fragment key={o.id}>
               <Circle cx={o.x} cy={y} r={11 * orbPulse} fill={pal.accent} fillOpacity={0.18} />
@@ -546,7 +548,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
             <Circle
               key={`t${i}`}
               cx={p.x}
-              cy={p.y - camY}
+              cy={camBase - p.y}
               r={1.5 + 6 * f}
               fill={pal.primary}
               fillOpacity={0.08 + 0.2 * f}
@@ -557,9 +559,9 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
         {/* the spark */}
         {g.status === 'playing' && (
           <>
-            <Circle cx={g.spark.x} cy={g.spark.y - camY} r={17} fill={pal.primary} fillOpacity={0.16 * sparkFlicker} />
-            <Circle cx={g.spark.x} cy={g.spark.y - camY} r={9.5} fill={pal.primary} fillOpacity={0.45 * sparkFlicker} />
-            <Circle cx={g.spark.x} cy={g.spark.y - camY} r={4.5} fill={WHITE} fillOpacity={sparkFlicker} />
+            <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={17} fill={pal.primary} fillOpacity={0.16 * sparkFlicker} />
+            <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={9.5} fill={pal.primary} fillOpacity={0.45 * sparkFlicker} />
+            <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={4.5} fill={WHITE} fillOpacity={sparkFlicker} />
           </>
         )}
 
@@ -568,7 +570,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
           <Circle
             key={`p${i}`}
             cx={p.x}
-            cy={p.y - camY}
+            cy={camBase - p.y}
             r={p.r}
             fill={p.color}
             fillOpacity={Math.max(0, p.life / p.max)}
@@ -698,7 +700,7 @@ const styles = StyleSheet.create({
   fuse: { width: 12, height: 22, borderRadius: 4 },
   hint: {
     position: 'absolute',
-    bottom: 120,
+    top: '14%',
     left: 0,
     right: 0,
     alignItems: 'center',
