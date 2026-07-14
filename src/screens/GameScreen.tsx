@@ -7,13 +7,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import Svg, { Circle, Line, Polygon, Polyline } from 'react-native-svg';
+import Svg, { Circle, Line, Polygon, Polyline, Text as SvgText } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import { sfx } from '../game/sound';
 import {
   DANGER,
   FORK_SCORE,
   MAX_MULTIPLIER,
-  ORB_SCORE,
   PALETTES,
   STARTING_FUSES,
   WHITE,
@@ -37,10 +37,10 @@ import {
 } from '../game/track';
 
 const { width: W, height: H } = Dimensions.get('window');
-const CFG: TrackConfig = { W, laneGap: W * 0.28, rowH: 132 };
+const CFG: TrackConfig = { W, laneGap: W * 0.28, rowH: 116 };
 // The spark rides UP the screen: it sits low (thumb-friendly) and upcoming
 // track scrolls in from the top, so a thumb at the bottom never hides the path.
-const SPARK_SCREEN_Y = H * 0.7;
+const SPARK_SCREEN_Y = H * 0.74;
 const ORB_RADIUS = 28;
 
 interface Particle {
@@ -52,6 +52,15 @@ interface Particle {
   max: number;
   color: string;
   r: number;
+}
+
+interface Floatie {
+  x: number;
+  y: number; // world coords; rises as it fades
+  text: string;
+  color: string;
+  life: number;
+  max: number;
 }
 
 interface GameState {
@@ -77,6 +86,7 @@ interface GameState {
   shake: number;
   trail: Vec[];
   particles: Particle[];
+  floaties: Floatie[];
   hintUntil: number;
 }
 
@@ -105,6 +115,7 @@ function freshGame(): GameState {
     shake: 0,
     trail: [],
     particles: [],
+    floaties: [],
     hintUntil: t + 4500,
   };
 }
@@ -141,6 +152,9 @@ function loseFuse(g: GameState, at: Vec) {
   if (g.fuses <= 0) {
     g.status = 'over';
     g.overAt = g.now;
+    sfx.gameOver();
+  } else {
+    sfx.zap();
   }
 }
 
@@ -177,6 +191,7 @@ function pullSection(g: GameState): boolean {
     };
     g.score += 100 * g.circuit;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    sfx.levelUp();
   }
   return true;
 }
@@ -268,8 +283,19 @@ function step(g: GameState, dtMs: number) {
     if (Math.hypot(o.x - g.spark.x, o.y - g.spark.y) < ORB_RADIUS) {
       o.taken = true;
       g.combo += 1;
-      g.score += ORB_SCORE * multiplier(g.combo);
-      burst(g, o.x, o.y, pal.accent, 10, 200);
+      const gain = o.value * multiplier(g.combo);
+      g.score += gain;
+      burst(g, o.x, o.y, o.big ? '#FFD700' : pal.accent, o.big ? 22 : 10, o.big ? 300 : 200);
+      g.floaties.push({
+        x: o.x,
+        y: o.y,
+        text: `+${gain}`,
+        color: o.big ? '#FFD700' : pal.accent,
+        life: 0.9,
+        max: 0.9,
+      });
+      if (o.big) sfx.gem();
+      else sfx.orb(g.combo);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
   }
@@ -294,17 +320,27 @@ function updateParticles(g: GameState, dt: number) {
     p.life -= dt;
   }
   g.particles = g.particles.filter((p) => p.life > 0);
+  for (const f of g.floaties) {
+    f.y += 70 * dt; // world-up = screen-up
+    f.life -= dt;
+  }
+  g.floaties = g.floaties.filter((f) => f.life > 0);
 }
 
-/** Glow stroke helper: layered polylines from wide/faint to thin/bright. */
+/**
+ * Glow stroke helper: layered polylines from wide/faint to thin/bright.
+ * `flow` animates dashes running along the wire like live current.
+ */
 function GlowLine({
   pts,
   color,
   bright,
+  flow,
 }: {
   pts: Vec[];
   color: string;
   bright: boolean;
+  flow?: number;
 }) {
   const str = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
   return (
@@ -335,6 +371,18 @@ function GlowLine({
         fill="none"
         strokeLinejoin="round"
       />
+      {bright && flow !== undefined && (
+        <Polyline
+          points={str}
+          stroke={WHITE}
+          strokeWidth={3}
+          strokeOpacity={0.55}
+          strokeDasharray="3 17"
+          strokeDashoffset={flow}
+          fill="none"
+          strokeLinejoin="round"
+        />
+      )}
     </>
   );
 }
@@ -433,7 +481,8 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
     for (let i = g.consumeIx; i < g.track.sections.length; i++) {
       const s = g.track.sections[i];
       if (s.kind === 'fork' && !s.fork.resolved) {
-        s.fork.gate = s.fork.gate === 0 ? 1 : 0;
+        s.fork.gate = (s.fork.gate + 1) % s.fork.branches.length;
+        sfx.switch();
         Haptics.selectionAsync().catch(() => {});
         break;
       }
@@ -465,6 +514,23 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
     ? Math.max(0, Math.min(1, (g.banner.until - g.now) / 500))
     : 0;
   const orbPulse = 1 + 0.18 * Math.sin(g.now / 130);
+  const flowDash = -((g.now / 9) % 20); // current flowing along live wires
+
+  // Random jagged arcs crackling off the spark.
+  const arcs: string[] = [];
+  if (g.status === 'playing' && Math.random() < 0.75) {
+    for (let i = 0; i < 2; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const len = 10 + Math.random() * 14;
+      const x1 = g.spark.x + Math.cos(a) * 6;
+      const y1 = SPARK_SCREEN_Y + Math.sin(a) * 6;
+      const xm = g.spark.x + Math.cos(a) * (6 + len / 2) + (Math.random() - 0.5) * 8;
+      const ym = SPARK_SCREEN_Y + Math.sin(a) * (6 + len / 2) + (Math.random() - 0.5) * 8;
+      const x2 = g.spark.x + Math.cos(a) * (6 + len);
+      const y2 = SPARK_SCREEN_Y + Math.sin(a) * (6 + len);
+      arcs.push(`${x1.toFixed(1)},${y1.toFixed(1)} ${xm.toFixed(1)},${ym.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`);
+    }
+  }
 
   return (
     <Pressable style={[styles.root, { backgroundColor: pal.bg }]} onPressIn={onTap}>
@@ -493,7 +559,7 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
         {visible.map((s, si) => {
           if (s.kind === 'wire') {
             const pts = s.poly.map((p) => ({ x: p.x, y: camBase - p.y }));
-            return <GlowLine key={`w${si}-${s.startY}`} pts={pts} color={pal.primary} bright />;
+            return <GlowLine key={`w${si}-${s.startY}`} pts={pts} color={pal.primary} bright flow={flowDash} />;
           }
           const f = s.fork;
           return (
@@ -505,15 +571,17 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
                   <GlowLine
                     key={bi}
                     pts={pts}
-                    color={active ? pal.primary : pal.dim}
+                    // Riding toward a solid breaker? The live wire glows red.
+                    color={active ? (br.deadly ? DANGER : pal.primary) : pal.dim}
                     bright={active}
+                    flow={active ? flowDash : undefined}
                   />
                 );
               })}
-              {!f.resolved && <GateChevron fork={{ ...f, branches: [
-                { ...f.branches[0], legs: f.branches[0].legs.map((l) => ({ ...l, y1: camBase - l.y1, y2: camBase - l.y2 })) },
-                { ...f.branches[1], legs: f.branches[1].legs.map((l) => ({ ...l, y1: camBase - l.y1, y2: camBase - l.y2 })) },
-              ] }} color={pal.accent} />}
+              {!f.resolved && <GateChevron fork={{ ...f, branches: f.branches.map((b) => ({
+                ...b,
+                legs: b.legs.map((l) => ({ ...l, y1: camBase - l.y1, y2: camBase - l.y2 })),
+              })) }} color={pal.accent} />}
               {f.branches.map((br, bi) =>
                 br.breaker ? (
                   <BreakerMark
@@ -532,6 +600,20 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
         {g.track.orbs.map((o) => {
           if (o.taken || o.y < camBase - H - 40 || o.y > camBase + 40) return null;
           const y = camBase - o.y;
+          if (o.big) {
+            const r = 13 * orbPulse;
+            const d = `${o.x},${y - r} ${o.x + r * 0.75},${y} ${o.x},${y + r} ${o.x - r * 0.75},${y}`;
+            return (
+              <React.Fragment key={o.id}>
+                <Circle cx={o.x} cy={y} r={19 * orbPulse} fill="#FFD700" fillOpacity={0.15} />
+                <Polygon points={d} fill="#FFD700" fillOpacity={0.9} />
+                <Polygon
+                  points={`${o.x},${y - r * 0.45} ${o.x + r * 0.34},${y} ${o.x},${y + r * 0.45} ${o.x - r * 0.34},${y}`}
+                  fill={WHITE}
+                />
+              </React.Fragment>
+            );
+          }
           return (
             <React.Fragment key={o.id}>
               <Circle cx={o.x} cy={y} r={11 * orbPulse} fill={pal.accent} fillOpacity={0.18} />
@@ -562,6 +644,16 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
             <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={17} fill={pal.primary} fillOpacity={0.16 * sparkFlicker} />
             <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={9.5} fill={pal.primary} fillOpacity={0.45 * sparkFlicker} />
             <Circle cx={g.spark.x} cy={SPARK_SCREEN_Y} r={4.5} fill={WHITE} fillOpacity={sparkFlicker} />
+            {arcs.map((a, i) => (
+              <Polyline
+                key={`arc${i}`}
+                points={a}
+                stroke={i === 0 ? WHITE : pal.primary}
+                strokeWidth={1.4}
+                strokeOpacity={0.65 * sparkFlicker}
+                fill="none"
+              />
+            ))}
           </>
         )}
 
@@ -575,6 +667,22 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
             fill={p.color}
             fillOpacity={Math.max(0, p.life / p.max)}
           />
+        ))}
+
+        {/* floating score pops */}
+        {g.floaties.map((f, i) => (
+          <SvgText
+            key={`fl${i}`}
+            x={f.x}
+            y={camBase - f.y}
+            fill={f.color}
+            fillOpacity={Math.max(0, f.life / f.max)}
+            fontSize={f.text.length > 4 ? 20 : 17}
+            fontWeight="bold"
+            textAnchor="middle"
+          >
+            {f.text}
+          </SvgText>
         ))}
       </Svg>
 
@@ -700,28 +808,30 @@ const styles = StyleSheet.create({
   fuse: { width: 12, height: 22, borderRadius: 4 },
   hint: {
     position: 'absolute',
-    top: '14%',
+    bottom: 26,
     left: 0,
     right: 0,
     alignItems: 'center',
   },
   hintText: { fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
   hintSub: { fontSize: 13, color: '#9AA2C0', marginTop: 6, fontWeight: '600' },
+  // Banners live BELOW the spark, over already-passed track, so they
+  // never hide what's coming.
   banner: {
     position: 'absolute',
-    top: '30%',
+    top: '80%',
     left: 0,
     right: 0,
     alignItems: 'center',
   },
   bannerText: {
-    fontSize: 44,
+    fontSize: 30,
     fontWeight: '900',
-    letterSpacing: 4,
-    textShadowRadius: 24,
+    letterSpacing: 3,
+    textShadowRadius: 20,
     textShadowOffset: { width: 0, height: 0 },
   },
-  bannerSub: { fontSize: 16, fontWeight: '800', letterSpacing: 6, marginTop: 4 },
+  bannerSub: { fontSize: 13, fontWeight: '800', letterSpacing: 5, marginTop: 2 },
   overWrap: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(4,2,14,0.82)',

@@ -24,6 +24,8 @@ export interface Orb {
   x: number;
   y: number;
   taken: boolean;
+  value: number;
+  big?: boolean; // gem: drawn as a diamond, worth a lot more
 }
 
 export interface Blink {
@@ -52,11 +54,11 @@ export interface Fork {
   id: number;
   x: number; // junction point
   y: number;
-  gate: 0 | 1; // which branch is currently energized (0 = left)
+  gate: number; // which branch is currently energized; taps cycle it
   resolved: boolean; // spark has passed the junction; gate is locked
-  chosen?: 0 | 1;
-  branches: [Branch, Branch];
-  orbSide: 0 | 1 | null; // branch holding bonus orbs (combo resets if skipped)
+  chosen?: number;
+  branches: Branch[]; // 2, or 3 for triple forks
+  orbSide: number | null; // branch holding bonus orbs (combo resets if skipped)
   exit: Vec; // where the track continues after this fork
   exitLane: number;
 }
@@ -81,6 +83,9 @@ export interface TrackState {
   sinceFork: number; // wire sections emitted since the last fork
   rng: () => number;
 }
+
+export const ORB_VALUE = 40;
+export const GEM_VALUE = 200;
 
 export const laneX = (cfg: TrackConfig, lane: number) =>
   cfg.W / 2 + (lane - 1) * cfg.laneGap;
@@ -116,6 +121,12 @@ export function makeTrack(cfg: TrackConfig, seed: number): TrackState {
   return state;
 }
 
+function orb(state: TrackState, x: number, y: number, value = ORB_VALUE, big = false): Orb {
+  const o: Orb = { id: state.nextId++, x, y, taken: false, value, big };
+  state.orbs.push(o);
+  return o;
+}
+
 function pushWire(cfg: TrackConfig, state: TrackState, toLane: number, rows: number) {
   const x1 = laneX(cfg, state.endLane);
   const x2 = laneX(cfg, toLane);
@@ -141,6 +152,13 @@ function branchTargets(entryLane: number): [number, number] {
   return [0, 2];
 }
 
+function finishFork(state: TrackState, fork: Fork, startY: number, endY: number) {
+  state.sections.push({ kind: 'fork', startY, endY, fork, exitLane: fork.exitLane });
+  state.endY = endY;
+  state.endLane = fork.exitLane;
+  state.sinceFork = 0;
+}
+
 function pushFork(cfg: TrackConfig, state: TrackState, circuit: number) {
   const rng = state.rng;
   const entryLane = state.endLane;
@@ -155,14 +173,15 @@ function pushFork(cfg: TrackConfig, state: TrackState, circuit: number) {
   if (phaseAllowed) flavor = r < 0.5 ? 'trap' : r < 0.78 ? 'phase' : 'reward';
   else flavor = r < 0.55 ? 'trap' : 'reward';
 
-  const deadlySide: 0 | 1 = rng() < 0.5 ? 0 : 1;
-  const specialSide: 0 | 1 = flavor === 'trap' ? deadlySide : rng() < 0.5 ? 0 : 1;
+  const deadlySide = rng() < 0.5 ? 0 : 1;
+  const specialSide = flavor === 'trap' ? deadlySide : rng() < 0.5 ? 0 : 1;
+  const breakerFrac = 1.4 + rng() * 0.35; // hazard distance varies fork to fork
 
   const mergeLane = flavor === 'trap' ? -1 : rng() < 0.5 ? tL : tR;
   const rowsTall = flavor === 'trap' ? 2 : 3;
   const endY = y + rowsTall * cfg.rowH;
 
-  const makeBranch = (side: 0 | 1): Branch => {
+  const makeBranch = (side: number): Branch => {
     const t = side === 0 ? tL : tR;
     const bx = laneX(cfg, t);
     const legs: Leg[] = [{ x1: jx, y1: y, x2: bx, y2: y + cfg.rowH }];
@@ -172,7 +191,7 @@ function pushFork(cfg: TrackConfig, state: TrackState, circuit: number) {
 
     if (flavor === 'trap' && side === deadlySide) {
       deadly = true;
-      const by = y + 1.6 * cfg.rowH;
+      const by = y + breakerFrac * cfg.rowH;
       legs.push({ x1: bx, y1: y + cfg.rowH, x2: bx, y2: by });
       breaker = { x: bx, y: by, blown: false };
     } else {
@@ -182,11 +201,11 @@ function pushFork(cfg: TrackConfig, state: TrackState, circuit: number) {
         legs.push({ x1: bx, y1: y + 2 * cfg.rowH, x2: mx, y2: endY });
       }
       if (flavor === 'trap' && rng() < 0.4) {
-        orbs.push({ id: state.nextId++, x: bx, y: y + 1.5 * cfg.rowH, taken: false });
+        orbs.push(orb(state, bx, y + 1.5 * cfg.rowH));
       }
       if (flavor === 'reward' && side === specialSide) {
         for (const f of [1.15, 1.5, 1.85]) {
-          orbs.push({ id: state.nextId++, x: bx, y: y + f * cfg.rowH, taken: false });
+          orbs.push(orb(state, bx, y + f * cfg.rowH));
         }
       }
       if (flavor === 'phase' && side === specialSide) {
@@ -201,39 +220,87 @@ function pushFork(cfg: TrackConfig, state: TrackState, circuit: number) {
           },
         };
         for (const f of [1.15, 1.85]) {
-          orbs.push({ id: state.nextId++, x: bx, y: y + f * cfg.rowH, taken: false });
+          orbs.push(orb(state, bx, y + f * cfg.rowH));
         }
       }
     }
     const poly: Vec[] = [{ x: jx, y }, ...legs.map((l) => ({ x: l.x2, y: l.y2 }))];
-    state.orbs.push(...orbs);
     return { lane: t, legs, poly, deadly, breaker, orbs };
   };
 
-  const branches: [Branch, Branch] = [makeBranch(0), makeBranch(1)];
+  const branches: Branch[] = [makeBranch(0), makeBranch(1)];
 
   const exitLane =
     flavor === 'trap' ? branches[deadlySide === 0 ? 1 : 0].lane : mergeLane;
-  const exit: Vec = { x: laneX(cfg, exitLane), y: endY };
 
-  let orbSide: 0 | 1 | null = null;
-  if (flavor !== 'trap') orbSide = specialSide;
-
-  const fork: Fork = {
+  finishFork(state, {
     id: state.nextId++,
     x: jx,
     y,
     gate: rng() < 0.5 ? 0 : 1,
     resolved: false,
     branches,
-    orbSide,
-    exit,
+    orbSide: flavor === 'trap' ? null : specialSide,
+    exit: { x: laneX(cfg, exitLane), y: endY },
     exitLane,
+  }, y, endY);
+}
+
+/**
+ * Three-way fork from the center lane: taps cycle left/middle/right. One
+ * branch carries a gem jackpot; on later circuits another can be deadly.
+ */
+function pushTripleFork(cfg: TrackConfig, state: TrackState, circuit: number) {
+  const rng = state.rng;
+  const y = state.endY;
+  const jx = laneX(cfg, 1);
+  const endY = y + 3 * cfg.rowH;
+
+  const bonusSide = Math.floor(rng() * 3);
+  let deadlySide = -1;
+  if (circuit >= 4 && rng() < 0.55) {
+    do {
+      deadlySide = Math.floor(rng() * 3);
+    } while (deadlySide === bonusSide);
+  }
+
+  const makeBranch = (side: number): Branch => {
+    const t = side; // lanes 0, 1, 2
+    const bx = laneX(cfg, t);
+    const legs: Leg[] = [{ x1: jx, y1: y, x2: bx, y2: y + cfg.rowH }];
+    const orbs: Orb[] = [];
+    let deadly = false;
+    let breaker: Breaker | undefined;
+
+    if (side === deadlySide) {
+      deadly = true;
+      const by = y + (1.45 + rng() * 0.3) * cfg.rowH;
+      legs.push({ x1: bx, y1: y + cfg.rowH, x2: bx, y2: by });
+      breaker = { x: bx, y: by, blown: false };
+    } else {
+      legs.push({ x1: bx, y1: y + cfg.rowH, x2: bx, y2: y + 2 * cfg.rowH });
+      legs.push({ x1: bx, y1: y + 2 * cfg.rowH, x2: jx, y2: endY });
+      if (side === bonusSide) {
+        orbs.push(orb(state, bx, y + 1.15 * cfg.rowH));
+        orbs.push(orb(state, bx, y + 1.5 * cfg.rowH, GEM_VALUE, true));
+        orbs.push(orb(state, bx, y + 1.85 * cfg.rowH));
+      }
+    }
+    const poly: Vec[] = [{ x: jx, y }, ...legs.map((l) => ({ x: l.x2, y: l.y2 }))];
+    return { lane: t, legs, poly, deadly, breaker, orbs };
   };
-  state.sections.push({ kind: 'fork', startY: y, endY, fork, exitLane });
-  state.endY = endY;
-  state.endLane = exitLane;
-  state.sinceFork = 0;
+
+  finishFork(state, {
+    id: state.nextId++,
+    x: jx,
+    y,
+    gate: Math.floor(rng() * 3),
+    resolved: false,
+    branches: [makeBranch(0), makeBranch(1), makeBranch(2)],
+    orbSide: bonusSide,
+    exit: { x: jx, y: endY },
+    exitLane: 1,
+  }, y, endY);
 }
 
 /**
@@ -250,29 +317,28 @@ export function extendTrack(
   while (state.endY < untilY && guard++ < 200) {
     const rng = state.rng;
     // Breathing room between forks shrinks on later circuits.
-    const minGap = circuit >= 5 ? 1 : circuit >= 3 ? 1 : 2;
-    if (state.sinceFork >= minGap && rng() < 0.75) {
-      pushFork(cfg, state, circuit);
+    const minGap = circuit >= 3 ? 1 : 2;
+    if (state.sinceFork >= minGap && rng() < (circuit >= 2 ? 0.8 : 0.7)) {
+      if (state.endLane === 1 && circuit >= 2 && rng() < 0.2) {
+        pushTripleFork(cfg, state, circuit);
+      } else {
+        pushFork(cfg, state, circuit);
+      }
     } else {
-      // Straight run, occasionally sliding a lane over for visual variety.
+      // Straight run, often sliding a lane over for a wandering feel.
       let toLane = state.endLane;
-      if (rng() < 0.35) {
+      if (rng() < 0.45) {
         const opts = [state.endLane - 1, state.endLane + 1].filter(
           (l) => l >= 0 && l <= 2,
         );
         toLane = opts[Math.floor(rng() * opts.length)];
       }
-      const rows = toLane === state.endLane && rng() < 0.4 ? 2 : 1;
+      const rows = 1 + (rng() < 0.35 ? 1 : 0) + (rng() < 0.15 ? 1 : 0);
       pushWire(cfg, state, toLane, rows);
       // Loose orb on some straights.
       if (rng() < 0.3) {
         const last = state.sections[state.sections.length - 1];
-        state.orbs.push({
-          id: state.nextId++,
-          x: laneX(cfg, toLane),
-          y: last.endY - cfg.rowH / 2,
-          taken: false,
-        });
+        orb(state, laneX(cfg, toLane), last.endY - cfg.rowH / 2);
       }
     }
   }
@@ -290,7 +356,6 @@ export function pruneTrack(state: TrackState, aboveY: number, consumedIx: number
     removed++;
   }
   if (removed > 0) {
-    state.orbs = state.orbs.filter((o) => o.y >= aboveY || !o.taken);
     state.orbs = state.orbs.filter((o) => o.y >= aboveY - 400);
   }
   return removed;
