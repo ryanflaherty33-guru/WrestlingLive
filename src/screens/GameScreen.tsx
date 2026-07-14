@@ -4,12 +4,15 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle, Line, Polygon, Polyline, Text as SvgText } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { sfx } from '../game/sound';
+import { ScoreRow, cleanInitials, fetchTopScores, submitScore } from '../game/leaderboard';
 import {
   DANGER,
   FORK_SCORE,
@@ -439,10 +442,40 @@ interface Props {
   onHome: () => void;
 }
 
+const INITIALS_KEY = '@livewire/initials';
+
 export default function GameScreen({ best, onGameOver, onHome }: Props) {
   const gref = useRef<GameState>(freshGame());
   const [, setTick] = useState(0);
   const reportedRef = useRef(false);
+  const [initials, setInitials] = useState('');
+  const [posted, setPosted] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [board, setBoard] = useState<ScoreRow[] | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(INITIALS_KEY)
+      .then((v) => {
+        if (v) setInitials(v);
+      })
+      .catch(() => {});
+  }, []);
+
+  const postScore = () => {
+    const g = gref.current;
+    if (posting || posted || g.score <= 0) return;
+    const clean = cleanInitials(initials) || 'ZAP';
+    setPosting(true);
+    AsyncStorage.setItem(INITIALS_KEY, clean).catch(() => {});
+    submitScore(clean, g.score, g.circuit)
+      .then(() => fetchTopScores(5))
+      .then((rows) => {
+        setBoard(rows);
+        setPosted(true);
+      })
+      .catch(() => {})
+      .finally(() => setPosting(false));
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -491,6 +524,8 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
 
   const restart = () => {
     reportedRef.current = false;
+    setPosted(false);
+    setBoard(null);
     gref.current = freshGame();
   };
 
@@ -762,6 +797,42 @@ export default function GameScreen({ best, onGameOver, onHome }: Props) {
             reached circuit {g.circuit}
             {'\n'}best {Math.max(best.score, g.score)}
           </Text>
+
+          {!posted && g.score > 0 && (
+            <View style={styles.postRow}>
+              <TextInput
+                style={[styles.initialsInput, { borderColor: pal.primary, color: pal.primary }]}
+                value={initials}
+                onChangeText={(v) => setInitials(cleanInitials(v))}
+                placeholder="AAA"
+                placeholderTextColor="#3A4060"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={3}
+              />
+              <TouchableOpacity
+                style={[styles.postBtn, { borderColor: pal.accent, opacity: posting ? 0.5 : 1 }]}
+                onPress={postScore}
+                disabled={posting}
+              >
+                <Text style={[styles.postBtnText, { color: pal.accent }]}>
+                  {posting ? 'POSTING…' : 'POST SCORE'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {posted && board && (
+            <View style={styles.boardWrap}>
+              <Text style={[styles.boardTitle, { color: pal.accent }]}>WORLD TOP 5</Text>
+              {board.map((r, i) => (
+                <Text key={i} style={styles.boardRow}>
+                  {i + 1}. {r.initials.padEnd(3)}  {r.score}  <Text style={styles.boardDim}>c{r.circuit}</Text>
+                </Text>
+              ))}
+            </View>
+          )}
+
           <TouchableOpacity style={[styles.btn, { borderColor: pal.primary }]} onPress={restart}>
             <Text style={[styles.btnText, { color: pal.primary }]}>RE-CHARGE</Text>
           </TouchableOpacity>
@@ -860,8 +931,40 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '600',
   },
+  postRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 24,
+  },
+  initialsInput: {
+    borderWidth: 2,
+    borderRadius: 10,
+    width: 92,
+    paddingVertical: 8,
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 6,
+  },
+  postBtn: {
+    borderWidth: 2,
+    borderRadius: 999,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+  },
+  postBtnText: { fontSize: 14, fontWeight: '900', letterSpacing: 2 },
+  boardWrap: { marginTop: 22, alignItems: 'center', gap: 4 },
+  boardTitle: { fontSize: 13, fontWeight: '900', letterSpacing: 3, marginBottom: 4 },
+  boardRow: {
+    color: '#E7EAF8',
+    fontSize: 15,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  boardDim: { color: '#8890B0', fontWeight: '600' },
   btn: {
-    marginTop: 34,
+    marginTop: 26,
     borderWidth: 2,
     borderRadius: 999,
     paddingHorizontal: 44,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Polyline } from 'react-native-svg';
 import { PALETTES } from '../game/constants';
+import { ScoreRow, fetchTopScores } from '../game/leaderboard';
 
 const { width: W, height: H } = Dimensions.get('window');
 const pal = PALETTES[0];
@@ -32,6 +33,13 @@ interface Props {
 
 export default function HomeScreen({ best, onPlay }: Props) {
   const pulse = useRef(new Animated.Value(0)).current;
+  const [board, setBoard] = useState<ScoreRow[] | null>(null);
+
+  useEffect(() => {
+    fetchTopScores(5)
+      .then(setBoard)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -104,8 +112,19 @@ export default function HomeScreen({ best, onPlay }: Props) {
 
         {best.score > 0 && (
           <Text style={styles.best}>
-            BEST {best.score} · CIRCUIT {best.circuit}
+            YOUR BEST {best.score} · CIRCUIT {best.circuit}
           </Text>
+        )}
+
+        {board && board.length > 0 && (
+          <View style={styles.boardWrap}>
+            <Text style={[styles.boardTitle, { color: pal.accent }]}>WORLD TOP 5</Text>
+            {board.map((r, i) => (
+              <Text key={i} style={styles.boardRow}>
+                {i + 1}. {r.initials.padEnd(3)}  {r.score}
+              </Text>
+            ))}
+          </View>
         )}
       </View>
     </Pressable>
@@ -147,5 +166,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 2,
+  },
+  boardWrap: { marginTop: 18, alignItems: 'center', gap: 3 },
+  boardTitle: { fontSize: 12, fontWeight: '900', letterSpacing: 3, marginBottom: 3 },
+  boardRow: {
+    color: '#B8BEDA',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 });
